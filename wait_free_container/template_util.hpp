@@ -1,13 +1,18 @@
 #pragma once
 
-template <bool>
-struct select_type { 
-    template <class T1, class>
-    using type = T1;
+template <bool, typename T1, typename T2>
+struct select_type 
+{ 
 };
 
-template <>
-struct select_type<false> {
-    template <class, class T2>
-    using type = T2;
+template <typename T1, typename T2>
+struct select_type<true, T1, T2>
+{
+	using type = T1;
+};
+
+template <typename T1, typename T2>
+struct select_type<false, T1, T2>
+{
+	using type = T2;
 };
