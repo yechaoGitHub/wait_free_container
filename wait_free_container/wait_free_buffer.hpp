@@ -13,11 +13,11 @@
 #include "mutex_check_template.hpp"
 
 //容器内的元素elem， 容器外value
-template<typename T, typename TAllocator>
+template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_base 
 {
 public:
-	wait_free_buffer_base(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator& allocator = TAllocator()) :
+	wait_free_buffer_base(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		m_data(nullptr),
 		m_allocator(allocator),
 		m_inserting_value(inserting),
@@ -31,10 +31,11 @@ public:
 		m_getting(0),
 		m_resizing(0)
 	{
+
 		m_data = m_allocator.allocate(capacity);
 		assert(m_data);
 
-		std::for_each(m_data, m_data + m_capacity,
+		std::for_each(this->m_data, this->m_data + capacity,
 		[=](std::atomic<T>& elem)
 		{
 			elem.store(m_inserting_value);
@@ -56,6 +57,9 @@ public:
 
 	int64_t insert(const T& value)
 	{
+		assert(value != m_inserting_value && 
+			value != m_free_value);
+
 		int64_t insert_pos(0);
 		T old_elem;
 
@@ -78,7 +82,7 @@ public:
 		m_size++;
 		m_inserting--;
 
-		if (m_inserting >= m_capacity - 1)
+		if (insert_pos >= m_capacity - 1)
 		{
 			resize(m_capacity * 1.5);
 		}
@@ -260,24 +264,27 @@ public:
 	}
 
 protected:
-	std::atomic<T>*				m_data;
-	TAllocator					m_allocator;
-	const T						m_inserting_value;
-	const T						m_free_value;
-	std::atomic<int64_t>		m_cur_pos;
-	std::atomic<int64_t>		m_size;
-	std::atomic<int64_t>		m_capacity;
-	std::atomic<int64_t>		m_inserting;
-	std::atomic<int64_t>		m_removing;
-	std::atomic<int64_t>		m_setting;
-	std::atomic<int64_t>		m_getting;
-	std::atomic<int64_t>		m_resizing;
+	std::atomic<T>*					m_data;
+	TAllocator<std::atomic<T>>		m_allocator;
+	const T							m_inserting_value;
+	const T							m_free_value;
+	std::atomic<int64_t>			m_cur_pos;
+	std::atomic<int64_t>			m_size;
+	std::atomic<int64_t>			m_capacity;
+	std::atomic<int64_t>			m_inserting;
+	std::atomic<int64_t>			m_removing;
+	std::atomic<int64_t>			m_setting;
+	std::atomic<int64_t>			m_getting;
+	std::atomic<int64_t>			m_resizing;
 
 	void resize(int64_t new_capacity) 
 	{
-		mutex_check_strong(m_resizing, m_inserting, m_removing, m_setting, m_getting);
 		assert(m_size == m_capacity);
-		assert(m_resizing == 1);
+		int64_t old_resizing = mutex_check_strong(m_resizing, m_inserting, m_removing, m_setting, m_getting);
+		if (old_resizing != 0) 
+		{
+			return;
+		}
 
 		std::atomic<T>* new_data = m_allocator.allocate(new_capacity);
 		assert(new_data);
@@ -285,7 +292,7 @@ protected:
 
 		for (int64_t i =0; i < m_capacity; i++)
 		{
-			m_data[i].store(new_data[i]);
+			new_data[i].store(m_data[i]);
 		}
 
 		m_allocator.deallocate(m_data, m_capacity);
@@ -296,13 +303,13 @@ protected:
 	}
 };
 
-template<typename T, typename TAllocator>
+template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_object : public wait_free_buffer_base<T, TAllocator>
 {
 	using base = wait_free_buffer_base<T, TAllocator>;
 
 public:
-	wait_free_buffer_object(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator& allocator = TAllocator()) :
+	wait_free_buffer_object(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
@@ -312,13 +319,13 @@ public:
 	}
 };
 
-template<typename T, typename TAllocator>
+template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_integer : public wait_free_buffer_base<T, TAllocator>
 {
 	using base = wait_free_buffer_base<T, TAllocator>;
 
 public:
-	wait_free_buffer_integer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator& allocator = TAllocator()) :
+	wait_free_buffer_integer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
@@ -332,59 +339,59 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, base::m_resizing);
-		if (index >= base::m_cur_pos)
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
 		{
-			base::m_setting--;
+			this->m_setting--;
 			return false;
 		}
 
 		do
 		{
-			old_elem = base::m_data[index];
+			old_elem = this->m_data[index];
 			if (old_elem == base::m_free_value)
 			{
-				base::m_setting--;
+				this->m_setting--;
 				return false;
 			}
 			new_elem = old_elem + operand;
-		} while (!base::m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		base::m_size++;
-		base::m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
 		return true;
 	}
 
-	/*bool fetch_and(int64_t index, T operand, T& result)
+	bool fetch_and(int64_t index, T operand, T& result)
 	{
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(m_setting, m_resizing);
-		if (index >= m_cur_pos)
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
 		{
-			m_setting--;
+			this->m_setting--;
 			return false;
 		}
 
 		do
 		{
-			old_elem = m_data[index];
-			if (old_elem == m_free_value)
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value)
 			{
-				m_setting--;
+				this->m_setting--;
 				return false;
 			}
 			new_elem = old_elem & operand;
-		} while (!m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		m_size++;
-		m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
 		return true;
 	}
@@ -394,28 +401,28 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(m_setting, m_resizing);
-		if (index >= m_cur_pos)
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
 		{
-			m_setting--;
+			this->m_setting--;
 			return false;
 		}
 
 		do
 		{
-			old_elem = m_data[index];
-			if (old_elem == m_free_value)
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value)
 			{
-				m_setting--;
+				this->m_setting--;
 				return false;
 			}
 			new_elem = old_elem | operand;
-		} while (!m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		m_size++;
-		m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
 		return true;
 	}
@@ -425,28 +432,29 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(m_setting, m_resizing);
-		if (index >= m_cur_pos)
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
 		{
-			m_setting--;
+			this->m_setting--;
 			return false;
 		}
 
 		do
 		{
-			old_elem = m_data[index];
-			if (old_elem == m_free_value)
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value)
 			{
-				m_setting--;
+				this->m_setting--;
 				return false;
 			}
 			new_elem = old_elem - operand;
-		} while (!m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		m_size++;
-		m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
 		return true;
 	}
@@ -456,40 +464,41 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(m_setting, m_resizing);
-		if (index >= m_cur_pos)
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
 		{
-			m_setting--;
+			this->m_setting--;
 			return false;
 		}
 
 		do
 		{
-			old_elem = m_data[index];
-			if (old_elem == m_free_value)
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value)
 			{
-				m_setting--;
+				this->m_setting--;
 				return false;
 			}
 			new_elem = old_elem ^ operand;
-		} while (!m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		m_size++;
-		m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
 		return true;
-	}*/
+	}
 };
 
-template<typename T, typename TAllocator>
+template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_pointer : public wait_free_buffer_base<T, TAllocator>
 {
 	using base = wait_free_buffer_base<T, TAllocator>;
 
 public:
-	wait_free_buffer_pointer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator& allocator = TAllocator()) :
+	wait_free_buffer_pointer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
@@ -498,80 +507,81 @@ public:
 	{
 	}
 
-	//bool fetch_add(int64_t index, T operand, T& result)
-	//{
-	//	T old_elem;
-	//	T new_elem;
+	bool fetch_add(int64_t index, T operand, T& result)
+	{
+		T old_elem;
+		T new_elem;
 
-	//	mutex_check_weak(m_setting, m_resizing);
-	//	if (index >= m_cur_pos)
-	//	{
-	//		m_setting--;
-	//		return false;
-	//	}
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
+		{
+			this->m_setting--;
+			return false;
+		}
 
-	//	do
-	//	{
-	//		old_elem = m_data[index];
-	//		if (old_elem == m_free_value)
-	//		{
-	//			m_setting--;
-	//			return false;
-	//		}
-	//		new_elem = old_elem + operand;
-	//	} while (!m_data[index].compare_exchange_strong(old_elem, new_elem));
+		do
+		{
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value)
+			{
+				this->m_setting--;
+				return false;
+			}
+			new_elem = old_elem + operand;
+		} while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
-	//	result = old_elem;
+		result = old_elem;
 
-	//	m_size++;
-	//	m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
-	//	return true;
-	//}
+		return true;
+	}
 
-	//bool fetch_sub(int64_t index, T operand, T& result)
-	//{
-	//	T old_elem;
-	//	T new_elem;
+	bool fetch_sub(int64_t index, T operand, T& result)
+	{
+		T old_elem;
+		T new_elem;
 
-	//	mutex_check_weak(m_setting, m_resizing);
-	//	if (index >= m_cur_pos)
-	//	{
-	//		m_setting--;
-	//		return false;
-	//	}
+		mutex_check_weak(this->m_setting, this->m_resizing);
+		if (index >= this->m_cur_pos)
+		{
+			this->m_setting--;
+			return false;
+		}
 
-	//	do
-	//	{
-	//		old_elem = m_data[index];
-	//		if (old_elem == m_free_value)
-	//		{
-	//			m_setting--;
-	//			return false;
-	//		}
-	//		new_elem = old_elem - operand;
-	//	} while (!m_data[index].compare_exchange_strong(old_elem, new_elem));
+		do
+		{
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value)
+			{
+				this->m_setting--;
+				return false;
+			}
+			new_elem = old_elem - operand;
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
-	//	result = old_elem;
+		result = old_elem;
 
-	//	m_size++;
-	//	m_setting--;
+		this->m_size++;
+		this->m_setting--;
 
-	//	return true;
-	//}
+		return true;
+	}
 };
 
-template<typename T, typename TAllocator>
+template<typename T, template<typename U> typename TAllocator>
 using wait_free_buffer_base_t = typename select_type<std::is_integral_v<T> && !std::is_same_v<T, bool>, wait_free_buffer_integer<T, TAllocator>,
 	typename select_type<std::is_pointer_v<T> && std::is_object_v<std::remove_pointer_t<T>>, wait_free_buffer_pointer<T, TAllocator>, wait_free_buffer_object<T, TAllocator>>::type>::type;
 
-template<typename T, typename TAllocator = std::allocator<std::atomic<T>>>
+template<typename T, template<typename U> typename TAllocator = std::allocator>
 class wait_free_buffer : public wait_free_buffer_base_t<T, TAllocator>
 {
 	using base = wait_free_buffer_base_t<T, TAllocator>;
 
 public:
-	wait_free_buffer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator& allocator = TAllocator()) :
+	wait_free_buffer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
