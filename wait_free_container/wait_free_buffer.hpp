@@ -429,7 +429,6 @@ protected:
 
 		this->m_buffer_operating--;
 	}
-
 };
 
 template<typename T, template<typename U> typename TAllocator>
