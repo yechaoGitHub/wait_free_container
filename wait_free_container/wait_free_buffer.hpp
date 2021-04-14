@@ -10,13 +10,12 @@
 #include <memory>
 
 #include "template_util.hpp"
-#include "mutex_check_template.hpp"
 
 //容器内的元素elem， 容器外value
 template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_base 
 {
-
+	
 	using base = wait_free_buffer_base;
 
 public:
@@ -35,8 +34,8 @@ public:
 		m_free_value(free),
 		m_cur_pos(0),
 		m_size(0),
-		m_performing(0),
-		m_resizing(0)
+		m_elem_operating(0),
+		m_buffer_operating(0)
 	{
 
 		this->m_data = this->m_allocator.allocate(capacity);
@@ -63,38 +62,55 @@ public:
 	}
 	
 	//在尾部添加元素,元素必须为inserting,增加size
-	int64_t push_back(const T& value) 
+	int64_t push_back(const T& value)
 	{
 		assert(value != base::m_inserting_value &&
 			value != base::m_free_value);
 
-		int64_t insert_pos(0);
+		int64_t old_pos(0);
 		T old_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
-
-		insert_pos = this->m_cur_pos.fetch_add(1);
-
-		while (insert_pos >= this->m_capacity)
+		while (true)
 		{
-			this->m_performing--;
-			std::this_thread::yield();
-			this->m_performing++;
-		}
+			while (true)
+			{
+				mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 
-		old_elem = this->m_data[insert_pos];
+				old_pos = this->m_cur_pos;
+				if (old_pos >= this->m_capacity)
+				{
+					this->m_elem_operating--;
+					std::this_thread::yield();
+				}
+				else 
+				{
+					break;
+				}
+			}
+
+			if (this->m_cur_pos.compare_exchange_strong(old_pos, old_pos + 1))
+			{
+				break;
+			}
+			else 
+			{
+				this->m_elem_operating--;
+			}
+		}
+	
+		old_elem = this->m_data[old_pos];
 		assert(old_elem == base::m_inserting_value);
-		this->m_data[insert_pos].store(value);
+		this->m_data[old_pos].store(value);
 
 		this->m_size++;
-		this->m_performing--;
+		this->m_elem_operating--;
 
-		if (insert_pos >= this->m_capacity - 1)
+		if (old_pos >= this->m_capacity - 1)
 		{
-			resize(this->m_capacity * 1.5);
+			increase_capacity(this->m_capacity * 1.5);
 		}
 
-		return insert_pos;
+		return old_pos;
 	}
 
 	//添加元素,元素必须为free,增加size
@@ -102,10 +118,10 @@ public:
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -114,14 +130,14 @@ public:
 			old_elem = this->m_data[index];
 			if (old_elem != base::m_free_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_strong(old_elem, value));
 
 		this->m_size++;
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -131,11 +147,11 @@ public:
 		T old_elem;
 		bool wait_for_inserting(false);
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -146,7 +162,7 @@ public:
 				old_elem = this->m_data[index];
 				if (old_elem == base::m_free_value)
 				{
-					this->m_performing--;
+					this->m_elem_operating--;
 					return false;
 				}
 
@@ -166,7 +182,7 @@ public:
 		}		
 
 		this->m_size--;
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -176,10 +192,10 @@ public:
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -189,13 +205,13 @@ public:
 			if (old_elem == base::m_free_value || 
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_strong(old_elem, value));
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -205,11 +221,11 @@ public:
 		T old_elem;
 		bool wait_for_inserting(false);
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -218,7 +234,7 @@ public:
 			old_elem = this->m_data[index];
 			if (old_elem == base::m_free_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 
@@ -231,7 +247,7 @@ public:
 		while (wait_for_inserting);
 
 		elem = old_elem;
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -240,11 +256,11 @@ public:
 	{
 		wait_free_elem_state ret;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return wait_free_elem_state::unallocated;
 		}
 
@@ -262,7 +278,7 @@ public:
 			ret = wait_free_elem_state::vailded;
 		}
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return ret;
 	}
@@ -271,10 +287,10 @@ public:
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -286,13 +302,13 @@ public:
 				old_elem != compare)
 			{
 				exchange = old_elem;
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_strong(old_elem, exchange));
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -301,7 +317,7 @@ public:
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
 		{
 			this->m_setting--;
@@ -316,15 +332,40 @@ public:
 				old_elem != compare)
 			{
 				exchange = old_elem;
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_weak(old_elem, exchange));
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
+	}
+
+	void clear() 
+	{
+		while (mutex_check_weak(this->m_buffer_operating, this->m_elem_operating) != 0) 
+		{
+			this->m_buffer_operating--;
+			std::this_thread::yield();
+		}
+
+		std::for_each_n(m_data, m_cur_pos, 
+		[=](std::atomic<T> &elem) 
+		{
+			assert(elem == base::m_inserting_value);
+			if (elem != base::m_free_value) 
+			{
+				elem.~atomic<T>();
+				elem = base::m_free_value;
+			}
+		});
+
+		this->m_size = 0;
+		this->m_cur_pos = 0;
+
+		this->m_buffer_operating--;
 	}
 
 	size_t cur_pos() const
@@ -332,7 +373,7 @@ public:
 		return this->m_cur_pos;
 	}
 
-	size_t size() const
+	size_t elem_count() const
 	{
 		return this->m_size;
 	}
@@ -342,12 +383,12 @@ public:
 		return this->m_capacity;
 	}
 
-	const T& inserting_value() 
+	const T& inserting_value() const
 	{
 		return m_inserting_value;
 	}
 
-	const T& free_value() 
+	const T& free_value() const
 	{
 		return m_free_value;
 	}
@@ -360,13 +401,13 @@ protected:
 	std::atomic<int64_t>				m_cur_pos;
 	std::atomic<int64_t>				m_size;
 	std::atomic<int64_t>				m_capacity;
-	mutable std::atomic<int64_t>		m_performing;
-	mutable std::atomic<int64_t>		m_resizing;
+	mutable std::atomic<int64_t>		m_elem_operating;
+	mutable std::atomic<int64_t>		m_buffer_operating;
 
-	void resize(int64_t new_capacity)
+	void increase_capacity(int64_t new_capacity)
 	{
-		int64_t old_resizing = mutex_check_strong(this->m_resizing, this->m_performing);
-		if (old_resizing != 0) 
+		int64_t old_count = mutex_check_strong(this->m_buffer_operating, this->m_elem_operating);
+		if (old_count != 0)
 		{
 			return;
 		}
@@ -375,7 +416,7 @@ protected:
 		assert(new_data);
 		std::fill_n(new_data, new_capacity, base::m_inserting_value);
 
-		for (int64_t i =0; i < this->m_capacity; i++)
+		for (int64_t i = 0; i < this->m_capacity; i++)
 		{
 			new_data[i].store(this->m_data[i]);
 		}
@@ -384,8 +425,9 @@ protected:
 		this->m_data = new_data;
 		this->m_capacity = new_capacity;
 
-		this->m_resizing--;
+		this->m_buffer_operating--;
 	}
+
 };
 
 template<typename T, template<typename U> typename TAllocator>
@@ -424,10 +466,10 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -437,7 +479,7 @@ public:
 			if (old_elem == base::m_free_value ||
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 			new_elem = old_elem + operand;
@@ -446,7 +488,7 @@ public:
 
 		result = old_elem;
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -456,10 +498,10 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -469,7 +511,7 @@ public:
 			if (old_elem == base::m_free_value ||
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 			new_elem = old_elem & operand;
@@ -477,7 +519,7 @@ public:
 
 		result = old_elem;
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -487,10 +529,10 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -500,7 +542,7 @@ public:
 			if (old_elem == base::m_free_value ||
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 			new_elem = old_elem | operand;
@@ -509,7 +551,7 @@ public:
 
 		result = old_elem;
 
-		this->m_performing--;
+		this->m_elem_operating--;
 
 		return true;
 	}
@@ -519,10 +561,10 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -532,7 +574,7 @@ public:
 			if (old_elem == base::m_free_value ||
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 			new_elem = old_elem - operand;
@@ -551,10 +593,10 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -564,7 +606,7 @@ public:
 			if (old_elem == base::m_free_value ||
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 			new_elem = old_elem ^ operand;
@@ -599,10 +641,10 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_performing, this->m_resizing);
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_performing--;
+			this->m_elem_operating--;
 			return false;
 		}
 
@@ -612,7 +654,7 @@ public:
 			if (old_elem == base::m_free_value ||
 				old_elem == base::m_inserting_value)
 			{
-				this->m_performing--;
+				this->m_elem_operating--;
 				return false;
 			}
 			new_elem = old_elem + operand;
@@ -630,7 +672,7 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_setting, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
 		{
 			this->m_setting--;

@@ -20,7 +20,7 @@ void remove_func()
 {
 	while (true)
 	{
-		size_t s = buffer.size();
+		size_t s = buffer.elem_count();
 		if (s != 0) 
 		{
 			int64_t index = rand() % buffer.cur_pos();
