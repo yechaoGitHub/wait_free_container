@@ -94,12 +94,12 @@ public:
 
 	bool remove(int64_t index, T* elem = nullptr)
 	{
-		void* old_elem(nullptr);
+		T old_elem;
 		bool wait_for_inserting(false);
 
 		mutex_check_weak(this->m_removing, this->m_resizing);
 
-		if (index > this->m_cur_pos)
+		if (index >= this->m_cur_pos)
 		{
 			this->m_removing--;
 			return false;

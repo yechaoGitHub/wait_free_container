@@ -13,7 +13,15 @@ int main()
 	pos = buffer.insert(2);
 	pos = buffer.insert(2);
 
-	std::atomic<int> i;
+	int a(0), b(0), c(0);
+	bool d = buffer.remove(0, &a);
+	d = buffer.remove(1, &b);
+	d = buffer.remove(2, &c);
+
+	d = buffer.remove(0);
+	d = buffer.remove(4);
+
+
 
 
 	return 0;
