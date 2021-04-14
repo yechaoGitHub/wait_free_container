@@ -2,34 +2,62 @@
 //
 
 #include "wait_free_buffer.hpp"
-#include <atomic>
+#include <thread>
 
-wait_free_buffer<int> buffer(-1, 0);
+wait_free_buffer<int> buffer(-1, 0, 3);
+std::atomic<int> i(1);
+std::atomic<bool> b(true);
+
+void increase_func() 
+{
+	while (b)
+	{
+		buffer.push_back(i++);
+	}
+}
+
+void remove_func() 
+{
+	while (true)
+	{
+		size_t s = buffer.size();
+		if (s != 0) 
+		{
+			int64_t index = rand() % buffer.cur_pos();
+			buffer.remove(index);
+		}
+
+		if (s == 0 && !b) 
+		{
+			break;
+		}
+	}
+}
+
 
 int main()
 {
-	int pos = buffer.push_back(2);
-	pos = buffer.push_back(2);
-	pos = buffer.push_back(2);
-	pos = buffer.push_back(2);
+	std::thread r1(remove_func);
+	std::thread r2(remove_func);
+	std::thread r3(remove_func);
+	std::thread i1(increase_func);
+	std::thread i2(increase_func);
+	std::thread i3(increase_func);
+	std::thread i4(increase_func);
 
-	int a(0), b(0), c(0);
-	bool d = buffer.remove(0, &a);
-	d = buffer.remove(1, &b);
-	d = buffer.remove(2, &c);
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 
-	d = buffer.remove(0);
-	d = buffer.remove(4);
+	b = false;
 
-	size_t s = buffer.size();
-	s = buffer.cur_pos();
-	s = buffer.capacity();
+	r1.join();
+	r2.join();
+	r3.join();
 
-	d = buffer.insert(0, 3);
-	d = buffer.store(0, 10);
+	i1.join();
+	i2.join();
+	i3.join();
+	i4.join();
 
-	int t;
-	d = buffer.load(0, t);
 
 
 	return 0;

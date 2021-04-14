@@ -77,7 +77,9 @@ public:
 
 		while (insert_pos >= this->m_capacity)
 		{
+			this->m_performing--;
 			std::this_thread::yield();
+			this->m_performing++;
 		}
 
 		old_elem = this->m_data[insert_pos];
@@ -158,7 +160,10 @@ public:
 		} 
 		while (!this->m_data[index].compare_exchange_strong(old_elem, base::m_free_value));
 
-		*elem = old_elem;
+		if (elem)
+		{
+			*elem = old_elem;
+		}		
 
 		this->m_size--;
 		this->m_performing--;
@@ -358,9 +363,8 @@ protected:
 	mutable std::atomic<int64_t>		m_performing;
 	mutable std::atomic<int64_t>		m_resizing;
 
-	void resize(int64_t new_capacity) 
+	void resize(int64_t new_capacity)
 	{
-		assert(this->m_size == this->m_capacity);
 		int64_t old_resizing = mutex_check_strong(this->m_resizing, this->m_performing);
 		if (old_resizing != 0) 
 		{
