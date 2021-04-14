@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <assert.h>
 #include <thread>
+#include <algorithm>
 
 wait_free_pointer_queue::wait_free_pointer_queue(int64_t capacity) :
     m_data(nullptr),
