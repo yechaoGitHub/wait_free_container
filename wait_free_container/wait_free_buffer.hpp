@@ -351,13 +351,6 @@ public:
 			std::this_thread::yield();
 		}
 	
-		if (this->m_cur_pos == 0) 
-		{
-			this->m_size = 0;
-			this->m_buffer_operating--;
-			return;
-		}
-
 		std::for_each(this->m_data, this->m_data + this->m_cur_pos,
 		[=](std::atomic<T> &elem)
 		{
