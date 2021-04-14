@@ -26,11 +26,7 @@ public:
 		m_free_value(free),
 		m_cur_pos(0),
 		m_size(0),
-		m_capacity(0),
-		m_inserting(0),
-		m_removing(0),
-		m_setting(0),
-		m_getting(0),
+		m_performing(0),
 		m_resizing(0)
 	{
 
@@ -56,16 +52,17 @@ public:
 
 		this->m_allocator.deallocate(this->m_data, this->m_capacity);
 	}
-
-	int64_t insert(const T& value)
+	
+	//在尾部添加元素,元素必须为inserting,增加size
+	int64_t push_back(const T& value) 
 	{
-		assert(value != base::m_inserting_value && 
+		assert(value != base::m_inserting_value &&
 			value != base::m_free_value);
 
 		int64_t insert_pos(0);
 		T old_elem;
 
-		mutex_check_weak(this->m_inserting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 
 		insert_pos = this->m_cur_pos.fetch_add(1);
 
@@ -74,15 +71,12 @@ public:
 			std::this_thread::yield();
 		}
 
-		old_elem = base::m_inserting_value;
-		while (!this->m_data[insert_pos].compare_exchange_strong(old_elem, value))
-		{
-			old_elem = base::m_inserting_value;
-			std::this_thread::yield();
-		}
+		old_elem = this->m_data[insert_pos];
+		assert(old_elem == base::m_inserting_value);
+		this->m_data[insert_pos].store(value);
 
 		this->m_size++;
-		this->m_inserting--;
+		this->m_performing--;
 
 		if (insert_pos >= this->m_capacity - 1)
 		{
@@ -92,16 +86,45 @@ public:
 		return insert_pos;
 	}
 
+	//添加元素,元素必须为free,增加size
+	bool insert(int64_t index, const T& value)
+	{
+		T old_elem;
+
+		mutex_check_weak(this->m_performing, this->m_resizing);
+		if (index >= this->m_cur_pos)
+		{
+			this->m_performing--;
+			return false;
+		}
+
+		do
+		{
+			old_elem = this->m_data[index];
+			if (old_elem != base::m_free_value)
+			{
+				this->m_performing--;
+				return false;
+			}
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, value));
+
+		this->m_size++;
+		this->m_performing--;
+
+		return true;
+	}
+
 	bool remove(int64_t index, T* elem = nullptr)
 	{
 		T old_elem;
 		bool wait_for_inserting(false);
 
-		mutex_check_weak(this->m_removing, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 
 		if (index >= this->m_cur_pos)
 		{
-			this->m_removing--;
+			this->m_performing--;
 			return false;
 		}
 
@@ -112,7 +135,7 @@ public:
 				old_elem = this->m_data[index];
 				if (old_elem == base::m_free_value)
 				{
-					this->m_removing--;
+					this->m_performing--;
 					return false;
 				}
 
@@ -129,7 +152,7 @@ public:
 		*elem = old_elem;
 
 		this->m_size--;
-		this->m_removing--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -139,11 +162,11 @@ public:
 		T old_elem;
 		bool wait_for_inserting(false);
 
-		mutex_check_weak(this->m_getting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 
 		if (index > this->m_cur_pos)
 		{
-			this->m_getting--;
+			this->m_performing--;
 			return false;
 		}
 
@@ -152,7 +175,7 @@ public:
 			old_elem = this->m_data[index];
 			if (old_elem == base::m_free_value)
 			{
-				this->m_getting--;
+				this->m_performing--;
 				return false;
 			}
 
@@ -165,35 +188,36 @@ public:
 		while (wait_for_inserting);
 
 		elem = old_elem;
-		this->m_getting--;
+		this->m_performing--;
 
 		return true;
 	}
 
+	//在元素不为free,inserting情况下,设置元素值,不增加size
 	bool store(int64_t index, T value)
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value || 
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_strong(old_elem, value));
 
-		this->m_size++;
-		this->m_setting--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -202,10 +226,10 @@ public:
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
@@ -213,16 +237,17 @@ public:
 		{
 			old_elem = this->m_data[index];
 			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting ||
 				old_elem != compare)
 			{
 				exchange = old_elem;
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_strong(old_elem, exchange));
 
-		this->m_setting--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -231,7 +256,7 @@ public:
 	{
 		T old_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
 			this->m_setting--;
@@ -245,13 +270,13 @@ public:
 				old_elem != compare)
 			{
 				exchange = old_elem;
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 		} 
 		while (!this->m_data[index].compare_exchange_weak(old_elem, exchange));
 
-		this->m_setting--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -271,24 +296,31 @@ public:
 		return this->m_capacity;
 	}
 
+	const T& inserting_value() 
+	{
+		return m_inserting_value;
+	}
+
+	const T& free_value() 
+	{
+		return m_free_value;
+	}
+
 protected:
-	std::atomic<T>*					m_data;
-	TAllocator<std::atomic<T>>		m_allocator;
-	const T							m_inserting_value;
-	const T							m_free_value;
-	std::atomic<int64_t>			m_cur_pos;
-	std::atomic<int64_t>			m_size;
-	std::atomic<int64_t>			m_capacity;
-	std::atomic<int64_t>			m_inserting;
-	std::atomic<int64_t>			m_removing;
-	std::atomic<int64_t>			m_setting;
-	std::atomic<int64_t>			m_getting;
-	std::atomic<int64_t>			m_resizing;
+	std::atomic<T>*						m_data;
+	TAllocator<std::atomic<T>>			m_allocator;
+	const T								m_inserting_value;
+	const T								m_free_value;
+	std::atomic<int64_t>				m_cur_pos;
+	std::atomic<int64_t>				m_size;
+	std::atomic<int64_t>				m_capacity;
+	mutable std::atomic<int64_t>		m_performing;
+	mutable std::atomic<int64_t>		m_resizing;
 
 	void resize(int64_t new_capacity) 
 	{
 		assert(this->m_size == this->m_capacity);
-		int64_t old_resizing = mutex_check_strong(this->m_resizing, this->m_inserting, this->m_removing, this->m_setting, this->m_getting);
+		int64_t old_resizing = mutex_check_strong(this->m_resizing, this->m_performing);
 		if (old_resizing != 0) 
 		{
 			return;
@@ -347,28 +379,29 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 			new_elem = old_elem + operand;
-		} while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		this->m_size++;
-		this->m_setting--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -378,19 +411,20 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 			new_elem = old_elem & operand;
@@ -398,8 +432,7 @@ public:
 
 		result = old_elem;
 
-		this->m_size++;
-		this->m_setting--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -409,28 +442,29 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 			new_elem = old_elem | operand;
-		} while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, new_elem));
 
 		result = old_elem;
 
-		this->m_size++;
-		this->m_setting--;
+		this->m_performing--;
 
 		return true;
 	}
@@ -440,19 +474,20 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 			new_elem = old_elem - operand;
@@ -461,7 +496,6 @@ public:
 
 		result = old_elem;
 
-		this->m_size++;
 		this->m_setting--;
 
 		return true;
@@ -472,19 +506,20 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 			new_elem = old_elem ^ operand;
@@ -493,7 +528,6 @@ public:
 
 		result = old_elem;
 
-		this->m_size++;
 		this->m_setting--;
 
 		return true;
@@ -520,19 +554,20 @@ public:
 		T old_elem;
 		T new_elem;
 
-		mutex_check_weak(this->m_setting, this->m_resizing);
+		mutex_check_weak(this->m_performing, this->m_resizing);
 		if (index >= this->m_cur_pos)
 		{
-			this->m_setting--;
+			this->m_performing--;
 			return false;
 		}
 
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
-				this->m_setting--;
+				this->m_performing--;
 				return false;
 			}
 			new_elem = old_elem + operand;
@@ -540,7 +575,6 @@ public:
 
 		result = old_elem;
 
-		this->m_size++;
 		this->m_setting--;
 
 		return true;
@@ -561,7 +595,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting_value)
 			{
 				this->m_setting--;
 				return false;
@@ -572,7 +607,6 @@ public:
 
 		result = old_elem;
 
-		this->m_size++;
 		this->m_setting--;
 
 		return true;
