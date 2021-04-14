@@ -345,20 +345,27 @@ public:
 
 	void clear() 
 	{
-		while (mutex_check_weak(this->m_buffer_operating, this->m_elem_operating) != 0) 
+		while (mutex_check_strong(this->m_buffer_operating, this->m_elem_operating) > 0) 
 		{
 			this->m_buffer_operating--;
 			std::this_thread::yield();
 		}
-
-		std::for_each_n(m_data, m_cur_pos, 
-		[=](std::atomic<T> &elem) 
+	
+		if (this->m_cur_pos == 0) 
 		{
-			assert(elem == base::m_inserting_value);
+			this->m_size = 0;
+			this->m_buffer_operating--;
+			return;
+		}
+
+		std::for_each(this->m_data, this->m_data + this->m_cur_pos,
+		[=](std::atomic<T> &elem)
+		{
+			assert(elem != base::m_inserting_value);
 			if (elem != base::m_free_value) 
 			{
 				elem.~atomic<T>();
-				elem = base::m_free_value;
+				elem.store(base::m_inserting_value);
 			}
 		});
 
@@ -409,6 +416,7 @@ protected:
 		int64_t old_count = mutex_check_strong(this->m_buffer_operating, this->m_elem_operating);
 		if (old_count != 0)
 		{
+			this->m_buffer_operating--;
 			return;
 		}
 
@@ -416,8 +424,9 @@ protected:
 		assert(new_data);
 		std::fill_n(new_data, new_capacity, base::m_inserting_value);
 
-		for (int64_t i = 0; i < this->m_capacity; i++)
+		for (int64_t i = 0; i < this->m_cur_pos; i++)
 		{
+			assert(this->m_data[i] != base::m_inserting_value);
 			new_data[i].store(this->m_data[i]);
 		}
 

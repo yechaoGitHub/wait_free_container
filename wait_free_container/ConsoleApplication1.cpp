@@ -18,13 +18,12 @@ void increase_func()
 
 void remove_func() 
 {
-	while (true)
+	while (b)
 	{
 		size_t s = buffer.elem_count();
 		if (s != 0) 
 		{
-			int64_t index = rand() % buffer.cur_pos();
-			buffer.remove(index);
+			buffer.clear();
 		}
 
 		if (s == 0 && !b) 
@@ -58,7 +57,7 @@ int main()
 	i3.join();
 	i4.join();
 
-
+	
 
 	return 0;
 }
