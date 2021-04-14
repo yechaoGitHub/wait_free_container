@@ -16,9 +16,18 @@
 template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_base 
 {
+
 	using base = wait_free_buffer_base;
 
 public:
+	enum class wait_free_elem_state : int64_t  
+	{ 
+		free, 
+		inserting, 
+		vailded,
+		unallocated
+	};
+
 	wait_free_buffer_base(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		m_data(nullptr),
 		m_allocator(allocator),
@@ -157,6 +166,35 @@ public:
 		return true;
 	}
 
+	//在元素不为free,inserting情况下,设置元素值,不增加size
+	bool store(int64_t index, T value)
+	{
+		T old_elem;
+
+		mutex_check_weak(this->m_performing, this->m_resizing);
+		if (index >= this->m_cur_pos)
+		{
+			this->m_performing--;
+			return false;
+		}
+
+		do
+		{
+			old_elem = this->m_data[index];
+			if (old_elem == base::m_free_value || 
+				old_elem == base::m_inserting_value)
+			{
+				this->m_performing--;
+				return false;
+			}
+		} 
+		while (!this->m_data[index].compare_exchange_strong(old_elem, value));
+
+		this->m_performing--;
+
+		return true;
+	}
+
 	bool load(int64_t index, T& elem) const
 	{
 		T old_elem;
@@ -164,7 +202,7 @@ public:
 
 		mutex_check_weak(this->m_performing, this->m_resizing);
 
-		if (index > this->m_cur_pos)
+		if (index >= this->m_cur_pos)
 		{
 			this->m_performing--;
 			return false;
@@ -193,33 +231,35 @@ public:
 		return true;
 	}
 
-	//在元素不为free,inserting情况下,设置元素值,不增加size
-	bool store(int64_t index, T value)
+	wait_free_elem_state elem_state(int64_t index) 
 	{
-		T old_elem;
+		wait_free_elem_state ret;
 
 		mutex_check_weak(this->m_performing, this->m_resizing);
+
 		if (index >= this->m_cur_pos)
 		{
 			this->m_performing--;
-			return false;
+			return wait_free_elem_state::unallocated;
 		}
 
-		do
+		T old_elem = this->m_data[index];
+		if (old_elem == base::m_free_value) 
 		{
-			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value || 
-				old_elem == base::m_inserting_value)
-			{
-				this->m_performing--;
-				return false;
-			}
-		} 
-		while (!this->m_data[index].compare_exchange_strong(old_elem, value));
+			ret = wait_free_elem_state::free;
+		}
+		else if (old_elem == base::m_inserting_value) 
+		{
+			ret = wait_free_elem_state::inserting;
+		}
+		else 
+		{
+			ret = wait_free_elem_state::vailded;
+		}
 
 		this->m_performing--;
 
-		return true;
+		return ret;
 	}
 
 	bool compare_and_exchange_strong(int64_t index, T& exchange, const T& compare)
@@ -267,6 +307,7 @@ public:
 		{
 			old_elem = this->m_data[index];
 			if (old_elem == base::m_free_value ||
+				old_elem == base::m_inserting ||
 				old_elem != compare)
 			{
 				exchange = old_elem;
