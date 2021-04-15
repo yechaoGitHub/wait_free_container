@@ -44,7 +44,7 @@ public:
 		std::for_each(this->m_data, this->m_data + capacity,
 		[=](std::atomic<T>& elem)
 		{
-			elem.store(base::m_inserting_value);
+			elem.store(this->m_inserting_value);
 		});
 
 		this->m_capacity = capacity;
@@ -64,8 +64,8 @@ public:
 	//在尾部添加元素,元素必须为inserting,增加size
 	int64_t push_back(const T& value)
 	{
-		assert(value != base::m_inserting_value &&
-			value != base::m_free_value);
+		assert(value != this->m_inserting_value &&
+			value != this->m_free_value);
 
 		int64_t old_pos(0);
 		T old_elem;
@@ -99,7 +99,7 @@ public:
 		}
 	
 		old_elem = this->m_data[old_pos];
-		assert(old_elem == base::m_inserting_value);
+		assert(old_elem == this->m_inserting_value);
 		this->m_data[old_pos].store(value);
 
 		this->m_size++;
@@ -128,7 +128,7 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem != base::m_free_value)
+			if (old_elem != this->m_free_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -160,7 +160,7 @@ public:
 			do
 			{
 				old_elem = this->m_data[index];
-				if (old_elem == base::m_free_value)
+				if (old_elem == this->m_free_value)
 				{
 					this->m_elem_operating--;
 					return false;
@@ -174,7 +174,7 @@ public:
 			} 
 			while (wait_for_inserting);
 		} 
-		while (!this->m_data[index].compare_exchange_strong(old_elem, base::m_free_value));
+		while (!this->m_data[index].compare_exchange_strong(old_elem, this->m_free_value));
 
 		if (elem)
 		{
@@ -202,8 +202,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value || 
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -232,13 +232,13 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value)
+			if (old_elem == this->m_free_value)
 			{
 				this->m_elem_operating--;
 				return false;
 			}
 
-			wait_for_inserting = old_elem == base::m_inserting_value;
+			wait_for_inserting = old_elem == this->m_inserting_value;
 			if (wait_for_inserting)
 			{
 				std::this_thread::yield();
@@ -265,11 +265,11 @@ public:
 		}
 
 		T old_elem = this->m_data[index];
-		if (old_elem == base::m_free_value) 
+		if (old_elem == this->m_free_value)
 		{
 			ret = wait_free_elem_state::free;
 		}
-		else if (old_elem == base::m_inserting_value) 
+		else if (old_elem == this->m_inserting_value)
 		{
 			ret = wait_free_elem_state::inserting;
 		}
@@ -297,8 +297,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting ||
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting ||
 				old_elem != compare)
 			{
 				exchange = old_elem;
@@ -327,8 +327,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting ||
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting ||
 				old_elem != compare)
 			{
 				exchange = old_elem;
@@ -354,11 +354,11 @@ public:
 		std::for_each(this->m_data, this->m_data + this->m_cur_pos,
 		[=](std::atomic<T> &elem)
 		{
-			assert(elem != base::m_inserting_value);
-			if (elem != base::m_free_value) 
+			assert(elem != this->m_inserting_value);
+			if (elem != this->m_free_value)
 			{
 				elem.~atomic<T>();
-				elem.store(base::m_inserting_value);
+				elem.store(this->m_inserting_value);
 			}
 		});
 
@@ -415,11 +415,11 @@ protected:
 
 		std::atomic<T>* new_data = this->m_allocator.allocate(new_capacity);
 		assert(new_data);
-		std::fill_n(new_data, new_capacity, base::m_inserting_value);
+		std::fill_n(new_data, new_capacity, this->m_inserting_value);
 
 		for (int64_t i = 0; i < this->m_cur_pos; i++)
 		{
-			assert(this->m_data[i] != base::m_inserting_value);
+			assert(this->m_data[i] != this->m_inserting_value);
 			new_data[i].store(this->m_data[i]);
 		}
 
@@ -477,8 +477,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -509,8 +509,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -540,8 +540,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -572,8 +572,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -604,8 +604,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -652,8 +652,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_elem_operating--;
 				return false;
@@ -683,8 +683,8 @@ public:
 		do
 		{
 			old_elem = this->m_data[index];
-			if (old_elem == base::m_free_value ||
-				old_elem == base::m_inserting_value)
+			if (old_elem == this->m_free_value ||
+				old_elem == this->m_inserting_value)
 			{
 				this->m_setting--;
 				return false;
