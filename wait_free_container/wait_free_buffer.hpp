@@ -68,7 +68,7 @@ public:
 			value != this->m_free_value);
 
 		int64_t old_pos(0);
-		T old_elem;
+		T old_elem();
 
 		while (true)
 		{
@@ -116,7 +116,7 @@ public:
 	//添加元素,元素必须为free,增加size
 	bool insert(int64_t index, const T& value)
 	{
-		T old_elem;
+		T old_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
@@ -144,7 +144,7 @@ public:
 
 	bool remove(int64_t index, T* elem = nullptr)
 	{
-		T old_elem;
+		T old_elem();
 		bool wait_for_inserting(false);
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
@@ -190,7 +190,7 @@ public:
 	//在元素不为free,inserting情况下,设置元素值,不增加size
 	bool store(int64_t index, T value)
 	{
-		T old_elem;
+		T old_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
@@ -218,7 +218,7 @@ public:
 
 	bool load(int64_t index, T& elem) const
 	{
-		T old_elem;
+		T old_elem();
 		bool wait_for_inserting(false);
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
@@ -283,9 +283,35 @@ public:
 		return ret;
 	}
 
-	bool compare_and_exchange_strong(int64_t index, T& exchange, const T& compare)
+	bool compare_and_exchange_strong(int64_t index, bool &exchanged, T& compare_value, const T& exchange_value)
 	{
-		T old_elem;
+		assert(exchange_value != this->m_inserting_value && 
+			exchange_value != this->m_free_value);
+
+		assert(compare_value != this->m_inserting_value &&
+			compare_value != this->m_free_value);
+
+		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
+		if (index >= this->m_cur_pos) 
+		{
+			this->m_elem_operating--;
+			return false;
+		}
+
+		exchanged = this->m_data[index].compare_exchange_strong(compare_value, exchange_value);
+
+		this->m_elem_operating--; 
+
+		return true;
+	}
+
+	bool compare_and_exchange_weak(int64_t index, bool &exchanged, T& compare_value, const T& exchange_value)
+	{
+		assert(exchange_value != this->m_inserting_value &&
+			exchange_value != this->m_free_value);
+
+		assert(compare_value != this->m_inserting_value &&
+			compare_value != this->m_free_value);
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
@@ -294,49 +320,7 @@ public:
 			return false;
 		}
 
-		do
-		{
-			old_elem = this->m_data[index];
-			if (old_elem == this->m_free_value ||
-				old_elem == this->m_inserting ||
-				old_elem != compare)
-			{
-				exchange = old_elem;
-				this->m_elem_operating--;
-				return false;
-			}
-		} 
-		while (!this->m_data[index].compare_exchange_strong(old_elem, exchange));
-
-		this->m_elem_operating--;
-
-		return true;
-	}
-
-	bool compare_and_exchange_weak(int64_t index, T& exchange, const T& compare)
-	{
-		T old_elem;
-
-		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
-		if (index >= this->m_cur_pos)
-		{
-			this->m_setting--;
-			return false;
-		}
-
-		do
-		{
-			old_elem = this->m_data[index];
-			if (old_elem == this->m_free_value ||
-				old_elem == this->m_inserting ||
-				old_elem != compare)
-			{
-				exchange = old_elem;
-				this->m_elem_operating--;
-				return false;
-			}
-		} 
-		while (!this->m_data[index].compare_exchange_weak(old_elem, exchange));
+		exchanged = this->m_data[index].compare_and_exchange_weak(compare_value, exchange_value);
 
 		this->m_elem_operating--;
 
@@ -464,8 +448,8 @@ public:
 	
 	bool fetch_add(int64_t index, T operand, T& result) 
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
@@ -496,8 +480,8 @@ public:
 
 	bool fetch_and(int64_t index, T operand, T& result)
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
@@ -527,8 +511,8 @@ public:
 
 	bool fetch_or(int64_t index, T operand, T& result) 
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
@@ -559,8 +543,8 @@ public:
 
 	bool fetch_sub(int64_t index, T operand, T& result)
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
@@ -591,8 +575,8 @@ public:
 
 	bool fetch_xor(int64_t index, T operand, T& result)
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating, this->m_resizing);
 		if (index >= this->m_cur_pos)
@@ -639,8 +623,8 @@ public:
 
 	bool fetch_add(int64_t index, T operand, T& result)
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
@@ -670,8 +654,8 @@ public:
 
 	bool fetch_sub(int64_t index, T operand, T& result)
 	{
-		T old_elem;
-		T new_elem;
+		T old_elem();
+		T new_elem();
 
 		mutex_check_weak(this->m_setting, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)

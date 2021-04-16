@@ -57,7 +57,7 @@ public:
 		int64_t new_size(0);
 		int64_t old_count(0);
 		int64_t en_pos(0);
-		T old_value(0);
+		T old_value();
 		bool full(false);
 		bool size_failed(false);
 
@@ -195,7 +195,7 @@ public:
 		int64_t new_size(0);
 		int64_t old_count(0);
 		int64_t de_pos(0);
-		T old_value(nullptr);
+		T old_value();
 
 		if (this->m_size <= 0)
 		{
