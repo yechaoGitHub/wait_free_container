@@ -329,12 +329,8 @@ public:
 
 	void clear() 
 	{
-		while (mutex_check_strong(this->m_buffer_operating, this->m_elem_operating) > 0) 
-		{
-			this->m_buffer_operating--;
-			std::this_thread::yield();
-		}
-	
+		mutex_check_cas_lock_strong(this->m_buffer_operating, this->m_elem_operating);
+
 		std::for_each(this->m_data, this->m_data + this->m_cur_pos,
 		[=](std::atomic<T> &elem)
 		{
@@ -349,7 +345,29 @@ public:
 		this->m_size = 0;
 		this->m_cur_pos = 0;
 
-		this->m_buffer_operating--;
+		this->m_buffer_operating = false;
+	}
+
+	void resize(int64_t new_cur_pos) 
+	{
+		if (new_cur_pos > m_capacity) 
+		{
+			increase_capacity((new_cur_pos + 1) * 1.5);
+		}
+
+		mutex_check_cas_lock_strong(this->m_buffer_operating, this->m_elem_operating);
+
+		if (new_cur_pos > m_cur_pos) 
+		{
+
+		}
+		else 
+		{
+
+		}
+		
+
+		this->m_buffer_operating = false;
 	}
 
 	size_t cur_pos() const
@@ -390,10 +408,11 @@ protected:
 
 	void increase_capacity(int64_t new_capacity)
 	{
-		int64_t old_count = mutex_check_strong(this->m_buffer_operating, this->m_elem_operating);
-		if (old_count != 0)
+		mutex_check_cas_lock_strong(this->m_buffer_operating, this->m_elem_operating);
+
+		if (new_capacity < m_capacity) 
 		{
-			this->m_buffer_operating--;
+			this->m_buffer_operating = false;
 			return;
 		}
 
@@ -411,7 +430,7 @@ protected:
 		this->m_data = new_data;
 		this->m_capacity = new_capacity;
 
-		this->m_buffer_operating--;
+		this->m_buffer_operating = false;
 	}
 };
 

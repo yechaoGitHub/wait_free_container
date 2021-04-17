@@ -1,12 +1,13 @@
 #pragma once
-#include "mutex_check_template.hpp"
-#include "wait_free_buffer.hpp"
-#include "wait_free_queue.hpp"
 
 #include <assert.h>
 
 #include <algorithm>
 #include <memory>
+
+#include "mutex_check_template.hpp"
+#include "wait_free_buffer.hpp"
+#include "wait_free_queue.hpp"
 
 template<typename T, template <typename U> typename TAllocator = std::allocator>
 class wait_free_memory_pool
@@ -30,15 +31,15 @@ public:
 		m_allocator(allocator)
 	{
 		this->m_data = this->m_allocator.allocate(capacity);
-		std::fill_n(this->m_data, capacity, T());
 		assert(this->m_data);
+		std::fill_n(this->m_data, capacity, T());
 		this->m_capacity = capacity;
 	}
 
 	~wait_free_memory_pool()
 	{
-		std::for_each(this->m_data, this->m_data + this->m_capacity,
-			[=](T& elem)
+		std::for_each_n(this->m_data, this->m_capacity,
+		[=](T& elem)
 		{
 			elem.~T();
 		});
@@ -60,7 +61,7 @@ public:
 			int64_t cur_pos = this->m_buffer.insert(0);
 			if (cur_pos >= this->m_capacity)
 			{
-				resize(this->m_capacity * 1.5);
+				increase_capacity(this->m_buffer.capacity());
 			}
 
 			return { *this,  cur_pos };
@@ -88,31 +89,41 @@ public:
 
 	iterator<T> get(int64_t index) 
 	{
-
-	}
-
-	iterator<T> get(int64_t offset) 
-	{
 		int64_t ref_count(0);
 		if (this->m_buffer.get(offset, ref_count) &&
-			ref_count > 0) 
+			ref_count > 0)
 		{
 			return { *this, offset };
 		}
-		else 
+		else
 		{
 			return { *this, -1 };
 		}
 	}
+
+	const iterator<T> get(int64_t offset) const
+	{
+		return const_cast<wait_free_memory_pool*>(this)->get(index);
+	}
 	
-	T* get_base() 
+	T* get_base()
 	{
 		return this->m_data;
 	}
 
 	const T* get_base() const 
 	{
-		return this->m_data;
+		return const_cast<wait_free_memory_pool*>(this)->get_base();
+	}
+
+	void resize(int64_t new_capacity)
+	{
+		mutex_check_cas_lock_strong(m_capacity_changing, m_elem_ref_count);
+
+		
+
+
+		m_capacity_changing = false;
 	}
 
 	size_t size() const
@@ -126,74 +137,55 @@ public:
 	}
 
 private:
-	T*							m_data;
-	std::atomic<int64_t>		m_capacity;
-	std::atomic<int64_t>		m_elem_ref_count;
-	std::atomic<int64_t>		m_resizing;
-	std::atomic<int64_t>		m_getting_base;
-	
-	wait_free_buffer<int64_t>	m_buffer;
-	wait_free_queue<int64_t>	m_queue;
-	TAllocator					m_allocator;
+	T*									m_data;
+	std::atomic<int64_t>				m_capacity;
+	mutable std::atomic<int64_t>		m_elem_ref_count;
+	mutable std::atomic<int64_t>		m_resizing;
+	mutable std::atomic<int64_t>		m_capacity_changing;
 
-	void resize(int64_t new_capacity)
+	mutable wait_free_buffer<int64_t>	m_buffer;
+	wait_free_queue<int64_t>			m_queue;
+	TAllocator<T>						m_allocator;
+
+	void wait_for_capacity_changing() const
 	{
+		while (this->m_capacity_changing)
+		{
+			std::this_thread::yield();
+		}
+	}
+
+	void increase_capacity(int64_t new_capacity)
+	{
+		mutex_check_cas_lock_strong(m_capacity_changing, m_elem_ref_count);
 		
-	}
-
-	int64_t increase_elem_ref_count(int64_t index) 
-	{
-		int64_t ret(0);
-		if (m_buffer.fetch_add(index, 1, ret)) 
+		if (new_capacity < m_capacity) 
 		{
-			return ret;
+			m_capacity_changing = false;
+			return;
 		}
-		else 
-		{
-			return -1;
-		}
+		
+		T* new_data = m_allocator.allocate(new_capacity);
+		assert(new_data);
+		std::copy_n(m_data, m_capacity, new_data);
+		m_capacity = new_capacity;
+
+		m_capacity_changing = false;
 	}
 
-	int64_t decrease_elem_ref_count(int64_t index)
+	int64_t increase_ref_count(int64_t count = 1) const
 	{
-		int64_t old_count(0);
-		int64_t new_count(0);
-		bool exchanged(false);
-
-		do
-		{
-			if (m_buffer.load(index, old_count))
-			{
-				new_count = std::max(old_count - 1, 0);
-			}
-			else 
-			{
-				return -1;
-			}
-
-			if (!m_buffer.compare_and_exchange_strong(index, exchanged, old_count, new_count)) 
-			{
-				return -1;
-			}
-
-		} while (!exchanged);
-
-		return old_count;
+		return this->m_elem_ref_count.fetch_add(count);
 	}
 
-	int64_t increase_ref_count() 
-	{
-		return this->m_elem_ref_count++;
-	}
-
-	int64_t decrease_ref_count()
+	int64_t decrease_ref_count(int64_t count = 1) const
 	{
 		int64_t old_count(0);
 		int64_t new_count(0);
 		do 
 		{
 			old_count = this->m_elem_ref_count;
-			new_count = std::max(old_count - 1, 0);
+			new_count = std::max(old_count - count, 0);
 		} 
 		while (!this->m_elem_ref_count.compare_exchange_strong(old_count, new_count));
 
@@ -206,7 +198,6 @@ private:
 	}
 
 public:
-	template<T>
 	class iterator
 	{
 		friend class wait_free_memory_pool<T>;
@@ -214,21 +205,38 @@ public:
 	public:
 		~iterator()
 		{
+			this->m_mempry_pool.decrease_ref_count(m_lock_count);
 		}
 
 		T* lock() 
 		{
-
+			m_lock_count++;
+			this->m_mempry_pool.increase_ref_count();
+			this->m_mempry_pool.wait_for_capacity_changing();
+			return this->m_mempry_pool.get_base() + this->m_offset;
 		}
 
 		const T* lock() const 
 		{
-			this->m_mempry_pool.increase_ref_count();
+			const_cast<iterator*>(this)->lock();
 		}
 
 		void unlock() const 
 		{
+			int64_t old_count{};
+			int64_t new_count{};
+			
+			do 
+			{
+				old_count = m_lock_count;
+				new_count = std::max(old_count - 1, 0);
+			}
+			while (!m_lock_count.compare_exchange_strong(old_count, new_count));
 
+			if (old_count < new_count) 
+			{
+				this->m_mempry_pool.decrease_ref_count();
+			}
 		}
 
 		size_t offset() const
@@ -242,14 +250,11 @@ public:
 			m_lock_count(0),
 			m_offset(offset)
 		{
-			this->m_mempry_pool.increase_memory_ref_count();
 		}
 
-		wait_free_memory_pool&		m_mempry_pool;
-		std::atomic<int64_t>		m_lock_count;
-		const int64_t				m_offset;
+		wait_free_memory_pool&			m_mempry_pool;
+		mutable std::atomic<int64_t>	m_lock_count;
+		const int64_t					m_offset;
 	};
-
 };
-
 

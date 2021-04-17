@@ -23,7 +23,7 @@ struct select_type<false, T1, T2>
 
 #pragma region(mutex_check_template)
 template<typename TCount, typename ...TMutex>
-TCount mutex_check_weak(TCount& count, TMutex &...mutex)
+TCount mutex_check_weak(std::atomic<TCount>& count, std::atomic<TMutex>&... mutex)
 {
 	TCount ret = count;
 
@@ -56,10 +56,9 @@ TCount mutex_check_weak(TCount& count, TMutex &...mutex)
 }
 
 template<typename TCount, typename ...TMutex>
-TCount mutex_check_weak(std::atomic<TCount>& count, TMutex &...mutex)
+TCount mutex_check_case_weak(std::atomic<TCount>& count, std::atomic<TMutex>&... mutex)
 {
 	TCount ret = count;
-
 	while (true)
 	{
 		count++;
@@ -89,29 +88,45 @@ TCount mutex_check_weak(std::atomic<TCount>& count, TMutex &...mutex)
 }
 
 template<typename TCount, typename ...TMutex>
-TCount mutex_check_strong(TCount& count, TMutex &...mutex)
+void mutex_check_cas_lock_weak(std::atomic<TCount>& count, std::atomic<TMutex>&... mutex)
 {
-	TCount ret = count++;
 	while (true)
 	{
+		while (count.exchange(true))
+		{
+			std::this_thread::yield();
+		}
+
 		TCount old_mutex_count = (0 + ... + mutex);
 		if (old_mutex_count)
 		{
-			std::this_thread::yield();
+			count = false;
+
+			while (true)
+			{
+				std::this_thread::yield();
+				TCount new_mutex_total = (0 + ... + mutex);
+				if (new_mutex_total < old_mutex_count)
+				{
+					break;
+				}
+			}
 		}
 		else
 		{
 			break;
 		}
 	}
-
-	return ret;
 }
 
 template<typename TCount, typename ...TMutex>
-TCount mutex_check_strong(std::atomic<TCount>& count, TMutex &...mutex)
+void mutex_check_cas_lock_strong(std::atomic<TCount>& count, std::atomic<TMutex>&... mutex) 
 {
-	TCount ret = count++;
+	while (count.exchange(true))
+	{
+		std::this_thread::yield();
+	}
+
 	while (true)
 	{
 		TCount old_mutex_count = (0 + ... + mutex);
@@ -124,7 +139,6 @@ TCount mutex_check_strong(std::atomic<TCount>& count, TMutex &...mutex)
 			break;
 		}
 	}
-
-	return ret;
 }
+
 #pragma endregion
