@@ -24,9 +24,6 @@
     <ClCompile Include="wait_free_pointer_queue.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="wait_free_buffer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="mutex_check_template.hpp">

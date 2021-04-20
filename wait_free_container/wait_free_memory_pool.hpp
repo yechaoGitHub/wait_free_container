@@ -89,19 +89,10 @@ public:
 
 	iterator<T> get(int64_t index) 
 	{
-		int64_t ref_count(0);
-		if (this->m_buffer.get(offset, ref_count) &&
-			ref_count > 0)
-		{
-			return { *this, offset };
-		}
-		else
-		{
-			return { *this, -1 };
-		}
+		return { *this, index };
 	}
 
-	const iterator<T> get(int64_t offset) const
+	const iterator<T> get(int64_t index) const
 	{
 		return const_cast<wait_free_memory_pool*>(this)->get(index);
 	}
@@ -116,24 +107,24 @@ public:
 		return const_cast<wait_free_memory_pool*>(this)->get_base();
 	}
 
-	void resize(int64_t new_capacity)
+	void resize(int64_t new_size)
 	{
-		mutex_check_cas_lock_strong(m_capacity_changing, m_elem_ref_count);
+		if (new_size > this->m_capacity)
+		{
+			increase_capacity(new_size);
+		}
 
-		
-
-
-		m_capacity_changing = false;
+		this->m_buffer.resize(new_size);
 	}
 
-	size_t size() const
+	size_t elem_count() const
 	{
-		return this->m_buffer.size();
+		return this->m_buffer.elem_count();
 	}
 
 	size_t capacity() const
 	{
-		return this->m_buffer.capacity();
+		return this->m_capacity;
 	}
 
 private:
@@ -208,17 +199,25 @@ public:
 			this->m_mempry_pool.decrease_ref_count(m_lock_count);
 		}
 
+		//<< to do add correct logic to this function >>
 		T* lock() 
 		{
-			m_lock_count++;
-			this->m_mempry_pool.increase_ref_count();
-			this->m_mempry_pool.wait_for_capacity_changing();
-			return this->m_mempry_pool.get_base() + this->m_offset;
+			if (this->m_offset == -1) 
+			{
+				return nullptr;
+			}
+			else 
+			{
+				m_lock_count++;
+				this->m_mempry_pool.increase_ref_count();
+				this->m_mempry_pool.wait_for_capacity_changing();
+				return this->m_mempry_pool.get_base() + this->m_offset;
+			}
 		}
 
 		const T* lock() const 
 		{
-			const_cast<iterator*>(this)->lock();
+			return const_cast<iterator*>(this)->lock();
 		}
 
 		void unlock() const 

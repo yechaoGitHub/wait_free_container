@@ -252,7 +252,7 @@ public:
 		return true;
 	}
 
-	wait_free_elem_state elem_state(int64_t index) 
+	wait_free_elem_state elem_state(int64_t index) const
 	{
 		wait_free_elem_state ret;
 
@@ -348,8 +348,10 @@ public:
 		this->m_buffer_operating = false;
 	}
 
-	void resize(int64_t new_cur_pos) 
+	void resize(int64_t new_size) 
 	{
+		int64_t new_cur_pos{ new_size - 1 };
+
 		if (new_cur_pos > m_capacity) 
 		{
 			increase_capacity((new_cur_pos + 1) * 1.5);
@@ -357,15 +359,24 @@ public:
 
 		mutex_check_cas_lock_strong(this->m_buffer_operating, this->m_elem_operating);
 
-		if (new_cur_pos > m_cur_pos) 
+		if (new_cur_pos > this->m_cur_pos) 
 		{
-
+			std::fill_n(this->m_data + this->m_cur_pos, new_cur_pos - m_cur_pos + 1, this->m_free_value);
 		}
 		else 
 		{
-
+			std::for_each(this->m_data + new_cur_pos, this->m_data + this->m_cur_pos + 1, 
+			[=](std::atomic<T>& elem) 
+			{
+				if (elem == this->m_free_value) 
+				{
+					elem.~atomic<T>();
+				}
+				elem = this->m_inserting_value;
+			});
 		}
 		
+		m_cur_pos = new_cur_pos;
 
 		this->m_buffer_operating = false;
 	}

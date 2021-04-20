@@ -143,7 +143,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ConsoleApplication1.cpp" />
-    <ClCompile Include="wait_free_buffer.cpp" />
     <ClCompile Include="wait_free_pointer_buffer.cpp" />
     <ClCompile Include="wait_free_pointer_queue.cpp" />
   </ItemGroup>
