@@ -9,10 +9,16 @@
 #include "wait_free_buffer.hpp"
 #include "wait_free_queue.hpp"
 
+enum class memory_pool_elem_state : int64_t
+{ 
+    free = 0, 
+    valided, 
+    out_of_range, 
+};
+
 template<typename T, template <typename U> typename TAllocator = std::allocator>
 class wait_free_memory_pool
 {
-	template<typename>
 	class iterator;
 
 	static const int64_t  BUFFER_FREE = -1;
@@ -20,55 +26,47 @@ class wait_free_memory_pool
 	static const int64_t  QUEUE_FREE = -1;
 
 public:
-	wait_free_memory_pool(int64_t capacity = 10, const TAllocator<T>& allocator = TAllocator<T>()) :
-		m_data(nullptr),
-		m_capacity(0),
-		m_elem_ref_count(0),
-		m_resizing(0),
-		m_getting_base(0),
-		m_buffer(BUFFER_INSERTING, BUFFER_FREE, capacity, allocator),
-		m_queue(QUEUE_FREE, capacity, allocator),
-		m_allocator(allocator)
+
+    explicit wait_free_memory_pool(int64_t capacity = 10, const TAllocator<T>& allocator = TAllocator<T>()) :
+        m_data(nullptr),
+        m_capacity(0),
+        m_elem_ref_count(0),
+        m_capacity_changing(0),
+        m_buffer(BUFFER_INSERTING, BUFFER_FREE, capacity),
+        m_queue(QUEUE_FREE, capacity),
+        m_allocator(allocator)
 	{
 		this->m_data = this->m_allocator.allocate(capacity);
 		assert(this->m_data);
-		std::fill_n(this->m_data, capacity, T());
 		this->m_capacity = capacity;
 	}
 
 	~wait_free_memory_pool()
 	{
-		std::for_each_n(this->m_data, this->m_capacity,
-		[=](T& elem)
-		{
-			elem.~T();
-		});
-
-		this->m_allocator.allocate(this->m_data, this->m_capacity);
+		this->m_allocator.deallocate(this->m_data, this->m_capacity);
 	}
 
-	iterator<T> allocate()
+	iterator allocate()
 	{
 		int64_t offset(0);
 
 		if (this->m_queue.dequeue(&offset))
 		{
-			this->m_allocating--;
-			return { *this, offset };
+			return { this, offset };
 		}
 		else
 		{
-			int64_t cur_pos = this->m_buffer.insert(0);
+			int64_t cur_pos = this->m_buffer.push_back(0);
 			if (cur_pos >= this->m_capacity)
 			{
 				increase_capacity(this->m_buffer.capacity());
 			}
 
-			return { *this,  cur_pos };
+			return { this,  cur_pos };
 		}
 	}
 
-	bool free(const iterator<T>& it)
+	bool deallocate(const iterator& it) noexcept
 	{
 		int64_t offset = it.offset();
 
@@ -76,33 +74,31 @@ public:
 		{
 			this->m_queue.enqueue(offset);
 
-			this->m_freeing--;
 			return true;
 		}
 		else
 		{
 			assert(0);
-			this->m_freeing--;
 			return false;
 		}
 	}
 
-	iterator<T> get(int64_t index) 
+	iterator get(int64_t index) noexcept
 	{
-		return { *this, index };
+		return { this, index };
 	}
 
-	const iterator<T> get(int64_t index) const
+	const iterator get(int64_t index) const
 	{
 		return const_cast<wait_free_memory_pool*>(this)->get(index);
 	}
 	
-	T* get_base()
+	T* get_base() noexcept
 	{
 		return this->m_data;
 	}
 
-	const T* get_base() const 
+	const T* get_base() const noexcept
 	{
 		return const_cast<wait_free_memory_pool*>(this)->get_base();
 	}
@@ -117,111 +113,168 @@ public:
 		this->m_buffer.resize(new_size);
 	}
 
-	size_t elem_count() const
+	size_t elem_count() const noexcept
 	{
 		return this->m_buffer.elem_count();
 	}
 
-	size_t capacity() const
+	size_t capacity() const noexcept
 	{
 		return this->m_capacity;
 	}
 
 private:
+
 	T*									m_data;
 	std::atomic<int64_t>				m_capacity;
 	mutable std::atomic<int64_t>		m_elem_ref_count;
-	mutable std::atomic<int64_t>		m_resizing;
 	mutable std::atomic<int64_t>		m_capacity_changing;
 
 	mutable wait_free_buffer<int64_t>	m_buffer;
 	wait_free_queue<int64_t>			m_queue;
 	TAllocator<T>						m_allocator;
 
-	void wait_for_capacity_changing() const
+    int64_t increase_ref_count() const noexcept
 	{
-		while (this->m_capacity_changing)
-		{
-			std::this_thread::yield();
-		}
+        return mutex_check_weak(this->m_elem_ref_count, this->m_capacity_changing);
 	}
 
 	void increase_capacity(int64_t new_capacity)
 	{
-		mutex_check_cas_lock_strong(m_capacity_changing, m_elem_ref_count);
+		mutex_check_cas_lock_strong(this->m_capacity_changing, this->m_elem_ref_count);
 		
-		if (new_capacity < m_capacity) 
+		if (new_capacity < this->m_capacity) 
 		{
-			m_capacity_changing = false;
+			this->m_capacity_changing = false;
 			return;
 		}
 		
-		T* new_data = m_allocator.allocate(new_capacity);
+		T* new_data = this->m_allocator.allocate(new_capacity);
 		assert(new_data);
-		std::copy_n(m_data, m_capacity, new_data);
-		m_capacity = new_capacity;
+        ::memcpy(new_data, this->m_data, this->m_capacity * sizeof(T));
 
-		m_capacity_changing = false;
+        this->m_allocator.deallocate(this->m_data, this->m_capacity);
+        this->m_data = new_data;
+
+		this->m_capacity = new_capacity;
+
+		this->m_capacity_changing = false;
 	}
 
-	int64_t increase_ref_count(int64_t count = 1) const
-	{
-		return this->m_elem_ref_count.fetch_add(count);
-	}
-
-	int64_t decrease_ref_count(int64_t count = 1) const
+	int64_t decrease_ref_count(int64_t count = 1) const noexcept
 	{
 		int64_t old_count(0);
 		int64_t new_count(0);
 		do 
 		{
 			old_count = this->m_elem_ref_count;
-			new_count = std::max(old_count - count, 0);
+			new_count = std::max(old_count - count, 0ll);
 		} 
 		while (!this->m_elem_ref_count.compare_exchange_strong(old_count, new_count));
 
 		return old_count;
 	}
 
-	int64_t ref_count() const 
+	int64_t ref_count() const noexcept
 	{
 		return this->m_elem_ref_count;
 	}
 
+    memory_pool_elem_state get_elem_state(int64_t index) 
+    {
+        auto state = this->m_buffer.elem_state(index);
+        switch (state)
+        {
+        case wait_free_elem_state::free:
+        case wait_free_elem_state::inserting:
+            return memory_pool_elem_state::free;
+
+        case wait_free_elem_state::vailded:
+            return memory_pool_elem_state::valided;
+
+        case wait_free_elem_state::unallocated:
+            return memory_pool_elem_state::out_of_range;
+
+        default:
+            assert(0);
+        }
+    }
+
 public:
+
 	class iterator
 	{
 		friend class wait_free_memory_pool<T>;
 
 	public:
-		~iterator()
+        iterator(const iterator&) = delete;
+        
+        void operator= (const iterator&) = delete;
+
+        explicit iterator(iterator&& rhd) noexcept :
+            iterator(rhd.m_mempry_pool, rhd.m_offset)
+        {
+            this->m_lock_count = rhd.m_lock_count;
+
+            rhd.m_lock_count = 0;
+            rhd.m_offset = -1;
+        }
+
+        iterator& operator=(iterator&& rhd) noexcept
+        {
+            this->~iterator();
+
+            this->m_mempry_pool = rhd.m_mempry_pool;
+            this->m_offset = rhd.m_offset;
+            this->m_lock_count.store(rhd.m_lock_count);
+
+            rhd.m_lock_count = 0;
+            rhd.m_offset = -1;
+
+            return *this;
+        }
+
+		~iterator() noexcept
 		{
-			this->m_mempry_pool.decrease_ref_count(m_lock_count);
+            this->m_offset = -1;
+			this->m_mempry_pool->decrease_ref_count(m_lock_count);
+            m_mempry_pool = nullptr;
 		}
 
-		//<< to do add correct logic to this function >>
-		T* lock() 
+		T* lock() noexcept
 		{
-			if (this->m_offset == -1) 
-			{
-				return nullptr;
-			}
-			else 
-			{
-				m_lock_count++;
-				this->m_mempry_pool.increase_ref_count();
-				this->m_mempry_pool.wait_for_capacity_changing();
-				return this->m_mempry_pool.get_base() + this->m_offset;
-			}
+            if (this->m_mempry_pool == nullptr || 
+                this->m_offset < 0) 
+            {
+                return nullptr;
+            }
+
+            memory_pool_elem_state state = this->m_mempry_pool->get_elem_state(this->m_offset);
+            switch (state)
+            {
+            case memory_pool_elem_state::free:
+            case memory_pool_elem_state::valided:				
+                m_lock_count++;
+		        this->m_mempry_pool->increase_ref_count();
+				return this->m_mempry_pool->get_base() + this->m_offset;
+               
+            case memory_pool_elem_state::out_of_range:
+                return nullptr;
+
+            default:
+                assert(0);
+            }
 		}
 
-		const T* lock() const 
+		const T* lock() const noexcept
 		{
 			return const_cast<iterator*>(this)->lock();
 		}
 
-		void unlock() const 
+		void unlock() const noexcept
 		{
+            assert(m_mempry_pool != nullptr);
+
 			int64_t old_count{};
 			int64_t new_count{};
 			
@@ -230,30 +283,57 @@ public:
 				old_count = m_lock_count;
 				new_count = std::max(old_count - 1, 0);
 			}
-			while (!m_lock_count.compare_exchange_strong(old_count, new_count));
+			while (!m_lock_count->compare_exchange_strong(old_count, new_count));
 
 			if (old_count < new_count) 
 			{
-				this->m_mempry_pool.decrease_ref_count();
+				this->m_mempry_pool->decrease_ref_count();
 			}
 		}
 
-		size_t offset() const
+		size_t offset() const noexcept
 		{
 			return this->m_offset;
 		}
 
+        memory_pool_elem_state state() const noexcept
+        {           
+            assert(this->m_mempry_pool != nullptr);
+            return this->m_mempry_pool->get_elem_state(this->m_offset);
+        }
+
+        bool valid() const noexcept
+        {
+            return this->m_mempry_pool && this->m_offset > 0;
+        }
+
+        operator bool() const noexcept
+        {
+            return valid();
+        }
+
+        bool operator == (const iterator &rhd) const noexcept
+        {
+            return (this->m_mempry_pool == rhd.m_mempry_pool) && (this->m_offset == rhd.m_offset);
+        }
+
+        bool operator != (const iterator &rhd) const noexcept
+        {
+            return !(*this == rhd);
+        }
+
 	private:
-		iterator(wait_free_memory_pool<T>& mempry_pool, uint64_t offset) :
+
+		iterator(wait_free_memory_pool<T> *mempry_pool, int64_t offset) noexcept :
 			m_mempry_pool(mempry_pool),
 			m_lock_count(0),
 			m_offset(offset)
 		{
 		}
 
-		wait_free_memory_pool&			m_mempry_pool;
+		wait_free_memory_pool*			m_mempry_pool;
 		mutable std::atomic<int64_t>	m_lock_count;
-		const int64_t					m_offset;
+		int64_t					        m_offset;
 	};
 };
 

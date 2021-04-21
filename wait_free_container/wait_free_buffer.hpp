@@ -11,6 +11,14 @@
 
 #include "template_util.hpp"
 
+enum class wait_free_elem_state : int64_t  
+{ 
+	free = 0, 
+	inserting, 
+	vailded,
+	unallocated
+};
+
 //容器内的元素elem， 容器外value
 template<typename T, template<typename U> typename TAllocator>
 class wait_free_buffer_base 
@@ -19,15 +27,8 @@ class wait_free_buffer_base
 	using base = wait_free_buffer_base;
 
 public:
-	enum class wait_free_elem_state : int64_t  
-	{ 
-		free, 
-		inserting, 
-		vailded,
-		unallocated
-	};
 
-	wait_free_buffer_base(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
+	explicit wait_free_buffer_base(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		m_data(nullptr),
 		m_allocator(allocator),
 		m_inserting_value(inserting),
@@ -68,7 +69,7 @@ public:
 			value != this->m_free_value);
 
 		int64_t old_pos(0);
-		T old_elem();
+        T old_elem{};
 
 		while (true)
 		{
@@ -114,7 +115,7 @@ public:
 	}
 
 	//添加元素,元素必须为free,增加size
-	bool insert(int64_t index, const T& value)
+	bool insert(int64_t index, const T& value) noexcept
 	{
 		T old_elem();
 
@@ -142,9 +143,9 @@ public:
 		return true;
 	}
 
-	bool remove(int64_t index, T* elem = nullptr)
+	bool remove(int64_t index, T* elem = nullptr) noexcept
 	{
-		T old_elem();
+        T old_elem{};
 		bool wait_for_inserting(false);
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
@@ -188,7 +189,7 @@ public:
 	}
 
 	//在元素不为free,inserting情况下,设置元素值,不增加size
-	bool store(int64_t index, T value)
+	bool store(int64_t index, T value) noexcept
 	{
 		T old_elem();
 
@@ -216,7 +217,7 @@ public:
 		return true;
 	}
 
-	bool load(int64_t index, T& elem) const
+	bool load(int64_t index, T& elem) const noexcept
 	{
 		T old_elem();
 		bool wait_for_inserting(false);
@@ -252,7 +253,7 @@ public:
 		return true;
 	}
 
-	wait_free_elem_state elem_state(int64_t index) const
+	wait_free_elem_state elem_state(int64_t index) const noexcept
 	{
 		wait_free_elem_state ret;
 
@@ -283,7 +284,7 @@ public:
 		return ret;
 	}
 
-	bool compare_and_exchange_strong(int64_t index, bool &exchanged, T& compare_value, const T& exchange_value)
+	bool compare_and_exchange_strong(int64_t index, bool &exchanged, T& compare_value, const T& exchange_value) noexcept
 	{
 		assert(exchange_value != this->m_inserting_value && 
 			exchange_value != this->m_free_value);
@@ -305,7 +306,7 @@ public:
 		return true;
 	}
 
-	bool compare_and_exchange_weak(int64_t index, bool &exchanged, T& compare_value, const T& exchange_value)
+	bool compare_and_exchange_weak(int64_t index, bool &exchanged, T& compare_value, const T& exchange_value) noexcept
 	{
 		assert(exchange_value != this->m_inserting_value &&
 			exchange_value != this->m_free_value);
@@ -327,7 +328,7 @@ public:
 		return true;
 	}
 
-	void clear() 
+	void clear() noexcept
 	{
 		mutex_check_cas_lock_strong(this->m_buffer_operating, this->m_elem_operating);
 
@@ -381,27 +382,27 @@ public:
 		this->m_buffer_operating = false;
 	}
 
-	size_t cur_pos() const
+	size_t cur_pos() const noexcept
 	{
 		return this->m_cur_pos;
 	}
 
-	size_t elem_count() const
+	size_t elem_count() const noexcept
 	{
 		return this->m_size;
 	}
 
-	size_t capacity() const
+	size_t capacity() const noexcept
 	{
 		return this->m_capacity;
 	}
 
-	const T& inserting_value() const
+	const T& inserting_value() const noexcept
 	{
 		return m_inserting_value;
 	}
 
-	const T& free_value() const
+	const T& free_value() const noexcept
 	{
 		return m_free_value;
 	}
@@ -451,7 +452,7 @@ class wait_free_buffer_object : public wait_free_buffer_base<T, TAllocator>
 	using base = wait_free_buffer_base<T, TAllocator>;
 
 public:
-	wait_free_buffer_object(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
+    explicit wait_free_buffer_object(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
@@ -467,7 +468,7 @@ class wait_free_buffer_integer : public wait_free_buffer_base<T, TAllocator>
 	using base = wait_free_buffer_base<T, TAllocator>;
 
 public:
-	wait_free_buffer_integer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
+    explicit wait_free_buffer_integer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
@@ -476,7 +477,7 @@ public:
 	{
 	}
 	
-	bool fetch_add(int64_t index, T operand, T& result) 
+	bool fetch_add(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -508,7 +509,7 @@ public:
 		return true;
 	}
 
-	bool fetch_and(int64_t index, T operand, T& result)
+	bool fetch_and(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -539,7 +540,7 @@ public:
 		return true;
 	}
 
-	bool fetch_or(int64_t index, T operand, T& result) 
+	bool fetch_or(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -571,7 +572,7 @@ public:
 		return true;
 	}
 
-	bool fetch_sub(int64_t index, T operand, T& result)
+	bool fetch_sub(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -603,7 +604,7 @@ public:
 		return true;
 	}
 
-	bool fetch_xor(int64_t index, T operand, T& result)
+	bool fetch_xor(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -642,16 +643,16 @@ class wait_free_buffer_pointer : public wait_free_buffer_base<T, TAllocator>
 	using base = wait_free_buffer_base<T, TAllocator>;
 
 public:
-	wait_free_buffer_pointer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
+    explicit wait_free_buffer_pointer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}
 
-	~wait_free_buffer_pointer()
+	~wait_free_buffer_pointer() 
 	{
 	}
 
-	bool fetch_add(int64_t index, T operand, T& result)
+	bool fetch_add(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -682,7 +683,7 @@ public:
 		return true;
 	}
 
-	bool fetch_sub(int64_t index, T operand, T& result)
+	bool fetch_sub(int64_t index, T operand, T& result) noexcept
 	{
 		T old_elem();
 		T new_elem();
@@ -725,7 +726,7 @@ class wait_free_buffer : public wait_free_buffer_base_t<T, TAllocator>
 	using base = wait_free_buffer_base_t<T, TAllocator>;
 
 public:
-	wait_free_buffer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
+    explicit wait_free_buffer(const T& inserting, const T& free, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		base(inserting, free, capacity, allocator)
 	{
 	}

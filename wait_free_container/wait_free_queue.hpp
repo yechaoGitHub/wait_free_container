@@ -195,7 +195,7 @@ public:
 		int64_t new_size(0);
 		int64_t old_count(0);
 		int64_t de_pos(0);
-		T old_value();
+        T old_value{};
 
 		if (this->m_size <= 0)
 		{
