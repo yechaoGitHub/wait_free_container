@@ -13,7 +13,7 @@ template<typename T, template<typename U> typename TAllocator = std::allocator>
 class wait_free_queue
 {
 public:
-	wait_free_queue(T free_value, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
+    explicit wait_free_queue(const T &free_value, int64_t capacity = 10, const TAllocator<std::atomic<T>>& allocator = TAllocator<std::atomic<T>>()) :
 		m_data(nullptr),
 		m_allocator(allocator),
 		m_free_value(free_value),
@@ -189,7 +189,7 @@ public:
 		return old_count;
 	}
 
-	bool dequeue(T* elem = nullptr, int64_t* index = nullptr) 
+	bool dequeue(T* elem = nullptr, int64_t* index = nullptr) noexcept
 	{
 		int64_t old_size(0);
 		int64_t new_size(0);
@@ -254,7 +254,7 @@ public:
 		return true;
 	}
 
-	int64_t dequeue_range(T* buffer, int64_t buffer_size, int64_t* index = nullptr) 
+	int64_t dequeue_range(T* buffer, int64_t buffer_size, int64_t* index = nullptr) noexcept
 	{
 		int64_t count(buffer_size / sizeof(T));
 		int64_t old_size(0);
@@ -323,12 +323,12 @@ public:
 		return count;
 	}
 
-	size_t size() 
+	size_t size() const noexcept
 	{
 		return this->m_size;
 	}
 
-	size_t capacity() 
+	size_t capacity() const noexcept
 	{
 		return this->m_capacity;
 	}
@@ -342,10 +342,10 @@ private:
 	std::atomic<int64_t>			m_size;
 	std::atomic<int64_t>			m_capacity;
 
-	std::atomic<int64_t>			m_enqueuing;
-	std::atomic<int64_t>			m_dequeuing;
-	std::atomic<int64_t>			m_reszing;
-	std::atomic<int64_t>			m_stuck_enqueue;
+    mutable std::atomic<int64_t>	m_enqueuing;
+    mutable std::atomic<int64_t>	m_dequeuing;
+    mutable std::atomic<int64_t>	m_reszing;
+    mutable std::atomic<int64_t>	m_stuck_enqueue;
 	std::atomic<int64_t>			m_offset;
 
 	int64_t resize(int64_t new_capacity) 
@@ -433,7 +433,7 @@ private:
 		return new_capacity;
 	}
 
-	void stuck_enqueue() 
+	void stuck_enqueue() noexcept
 	{
 		while (this->m_stuck_enqueue.exchange(1))
 		{
