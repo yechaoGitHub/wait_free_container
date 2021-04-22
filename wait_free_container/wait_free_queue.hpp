@@ -226,7 +226,7 @@ public:
 		while (true)
 		{
 			old_value = this->m_data[de_pos];
-			if (!old_value)
+			if (old_value == this->m_free_value)
 			{
 				std::this_thread::yield();
 				continue;
@@ -295,7 +295,7 @@ public:
 			while (true)
 			{
 				old_value = this->m_data[de_pos];
-				if (!old_value)
+				if (old_value == this->m_free_value)
 				{
 					std::this_thread::yield();
 					continue;

@@ -16,6 +16,8 @@ enum class memory_pool_elem_state : int64_t
     out_of_range, 
 };
 
+//wait_free_memory_pool will stuck when itorator dosen't release the lock, beacuse the iterator stuck increase_capacity function
+//implement a manual resize wait_free_buffer, when wait_free_buffer fulled, allocate return nullptr, meantime memory_pool call the increase_capacity
 template<typename T, template <typename U> typename TAllocator = std::allocator>
 class wait_free_memory_pool
 {
@@ -78,7 +80,6 @@ public:
 		}
 		else
 		{
-			assert(0);
 			return false;
 		}
 	}
@@ -254,7 +255,7 @@ public:
             {
             case memory_pool_elem_state::free:
             case memory_pool_elem_state::valided:				
-                m_lock_count++;
+                this->m_lock_count++;
 		        this->m_mempry_pool->increase_ref_count();
 				return this->m_mempry_pool->get_base() + this->m_offset;
                
@@ -280,10 +281,10 @@ public:
 			
 			do 
 			{
-				old_count = m_lock_count;
+				old_count = this->m_lock_count;
 				new_count = std::max(old_count - 1, 0);
 			}
-			while (!m_lock_count->compare_exchange_strong(old_count, new_count));
+			while (!this->m_lock_count->compare_exchange_strong(old_count, new_count));
 
 			if (old_count < new_count) 
 			{
