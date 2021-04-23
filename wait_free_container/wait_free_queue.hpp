@@ -51,7 +51,7 @@ public:
 		this->m_allocator.deallocate(this->m_data, this->m_capacity);
 	}
 
-	int64_t enqueue(T value) 
+	int64_t enqueue(const T& value) 
 	{
 		int64_t old_size(0);
 		int64_t new_size(0);
@@ -110,7 +110,8 @@ public:
 		return old_count;
 	}
 
-	int64_t enqueue_range(T* arr_elem, int64_t count) 
+    template<typename TIterator>
+	int64_t enqueue_range(TIterator it_start, const TIterator& it_end)
 	{
 		int64_t old_size(0);
 		int64_t new_size(0);
@@ -121,6 +122,8 @@ public:
 		bool full(false);
 		bool size_failed(false);
 		bool resized(false);
+
+        auto count = it_end - it_start;
 
 		do
 		{
@@ -164,7 +167,9 @@ public:
 		T free_value(this->m_free_value);
 		for (int64_t i = 0; i < fill_count; i++)
 		{
-			while (!this->m_data[en_pos].compare_exchange_strong(free_value, arr_elem[i]))
+            T& value = *(it_start + i);
+
+			while (!this->m_data[en_pos].compare_exchange_strong(free_value, value))
 			{
 				free_value = this->m_free_value;
 				std::this_thread::yield();
@@ -178,7 +183,7 @@ public:
 		if (resized)
 		{
 
-			resize((new_size + remain_count) * 1.5, &arr_elem[fill_count], remain_count);
+			resize((new_size + remain_count) * 1.5, it_start + fill_count, it_end);
 			this->m_stuck_enqueue = 0;
 		}
 		else
@@ -189,7 +194,7 @@ public:
 		return old_count;
 	}
 
-	bool dequeue(T* elem = nullptr, int64_t* index = nullptr) noexcept
+    int64_t dequeue(T& elem) noexcept
 	{
 		int64_t old_size(0);
 		int64_t new_size(0);
@@ -199,7 +204,7 @@ public:
 
 		if (this->m_size <= 0)
 		{
-			return false;
+			return -1;
 		}
 
 		mutex_check_weak(this->m_dequeuing, this->m_reszing);
@@ -211,7 +216,7 @@ public:
 			if (new_size >= old_size)
 			{
 				this->m_dequeuing--;
-				return false;
+				return -1;
 			}
 		} 
 		while (!this->m_size.compare_exchange_strong(old_size, new_size));
@@ -235,10 +240,7 @@ public:
 			{
 				if (this->m_data[de_pos].compare_exchange_strong(old_value, m_free_value))
 				{
-					if (elem)
-					{
-						*elem = old_value;
-					}
+                    elem = old_value;
 					break;
 				}
 			}
@@ -246,26 +248,76 @@ public:
 
 		m_dequeuing--;
 
-		if (index)
-		{
-			*index = old_count;
-		}
-
-		return true;
+		return old_count;
 	}
 
-	int64_t dequeue_range(T* buffer, int64_t buffer_size, int64_t* index = nullptr) noexcept
+    int64_t dequeue() noexcept
+    {
+        int64_t old_size(0);
+        int64_t new_size(0);
+        int64_t old_count(0);
+        int64_t de_pos(0);
+        T old_value{};
+
+        if (this->m_size <= 0)
+        {
+            return -1;
+        }
+
+        mutex_check_weak(this->m_dequeuing, this->m_reszing);
+
+        do
+        {
+            old_size = this->m_size;
+            new_size = (std::max)(old_size - 1, 0ll);
+            if (new_size >= old_size)
+            {
+                this->m_dequeuing--;
+                return -1;
+            }
+        } while (!this->m_size.compare_exchange_strong(old_size, new_size));
+
+        do
+        {
+            old_count = this->m_dequeue_count;
+            de_pos = (old_count + this->m_offset) % this->m_capacity;
+        } while (!this->m_dequeue_count.compare_exchange_strong(old_count, old_count + 1));
+
+        while (true)
+        {
+            old_value = this->m_data[de_pos];
+            if (old_value == this->m_free_value)
+            {
+                std::this_thread::yield();
+                continue;
+            }
+            else
+            {
+                if (this->m_data[de_pos].compare_exchange_strong(old_value, m_free_value))
+                {
+                    break;
+                }
+            }
+        }
+
+        m_dequeuing--;
+
+        return old_count;
+    }
+
+    template<typename TIterator>
+	int64_t dequeue_range(TIterator& start_it, const TIterator& end_it) noexcept
 	{
-		int64_t count(buffer_size / sizeof(T));
+		int64_t count(end_it - start_it);
 		int64_t old_size(0);
 		int64_t new_size(0);
 		int64_t old_count(0);
 		int64_t de_pos(0);
 		T old_value(nullptr);
 
-		if (this->m_size <= 0 || buffer_size <= 0 || buffer == nullptr)
+		if (this->m_size <= 0 || count <= 0)
 		{
-			return 0;
+			return -1;
 		}
 
 		mutex_check_weak(this->m_dequeuing, this->m_reszing);
@@ -277,9 +329,10 @@ public:
 			if (new_size >= old_size)
 			{
 				this->m_dequeuing--;
-				return false;
+				return -1;
 			}
-		} while (!this->m_size.compare_exchange_strong(old_size, new_size));
+		}
+        while (!this->m_size.compare_exchange_strong(old_size, new_size));
 
 		count = old_size - new_size;
 
@@ -290,7 +343,7 @@ public:
 		}
 		while (!this->m_dequeue_count.compare_exchange_strong(old_count, old_count + count));
 
-		for (int64_t i = 0; i < count; i++)
+		for (int64_t i = 0; i < count; i++, start_it++)
 		{
 			while (true)
 			{
@@ -304,7 +357,7 @@ public:
 				{
 					if (this->m_data[de_pos].compare_exchange_strong(old_value, this->m_free_value))
 					{
-						buffer[i] = old_value;
+                        *start_it = old_value;
 						break;
 					}
 				}
@@ -315,13 +368,69 @@ public:
 
 		this->m_dequeuing--;
 
-		if (index)
-		{
-			*index = old_count;
-		}
-
-		return count;
+		return old_count;
 	}
+
+    int64_t dequeue_range(int64_t &count) noexcept
+    {
+        int64_t old_size(0);
+        int64_t new_size(0);
+        int64_t old_count(0);
+        int64_t de_pos(0);
+        T old_value(nullptr);
+
+        if (this->m_size <= 0 || count <= 0)
+        {
+            return -1;
+        }
+
+        mutex_check_weak(this->m_dequeuing, this->m_reszing);
+
+        do
+        {
+            old_size = this->m_size;
+            new_size = (std::max)(old_size - count, 0ll);
+            if (new_size >= old_size)
+            {
+                this->m_dequeuing--;
+                return -1;
+            }
+        } while (!this->m_size.compare_exchange_strong(old_size, new_size));
+
+        count = old_size - new_size;
+
+        do
+        {
+            old_count = this->m_dequeue_count;
+            de_pos = (old_count + this->m_offset) % this->m_capacity;
+        } while (!this->m_dequeue_count.compare_exchange_strong(old_count, old_count + count));
+
+        for (int64_t i = 0; i < count; i++, start_it++)
+        {
+            while (true)
+            {
+                old_value = this->m_data[de_pos];
+                if (old_value == this->m_free_value)
+                {
+                    std::this_thread::yield();
+                    continue;
+                }
+                else
+                {
+                    if (this->m_data[de_pos].compare_exchange_strong(old_value, this->m_free_value))
+                    {
+                        break;
+                    }
+                }
+            }
+
+            de_pos = (de_pos + 1) % this->m_capacity;
+        }
+
+        this->m_dequeuing--;
+
+        return old_count;
+    }
 
 	size_t size() const noexcept
 	{
@@ -387,7 +496,8 @@ private:
 		return new_capacity;
 	}
 
-	int64_t resize(int64_t new_capacity, T* extra_copy, int64_t size) 
+    template<typename TIterator>
+	int64_t resize(int64_t new_capacity, TIterator start_it, const TIterator &end_it)
 	{
 		//队列满后，出列元素，在入列元素，会导致resize重复调用，只允许第一个争抢到的线程运行resize
 		int64_t old_value = mutex_check_strong(this->m_reszing, this->m_enqueuing, this->m_dequeuing);
@@ -408,7 +518,7 @@ private:
 		int64_t head_pos((this->m_dequeue_count + this->m_offset) % this->m_capacity);
 		int64_t tail_pos((this->m_enqueue_count + this->m_offset) % this->m_capacity);
 
-		for (int64_t i = 0; i < m_size; i++)
+		for (int64_t i = 0; i < this->m_size; i++)
 		{
 			new_data[i].store(this->m_data[head_pos]);
 			head_pos = (head_pos + 1) % this->m_capacity;
@@ -417,12 +527,15 @@ private:
 		this->m_offset = new_capacity - (this->m_dequeue_count % new_capacity);
 
 		int64_t en_pos(0);
-		for (int64_t i = 0; i < size; i++)
-		{
-			en_pos = (this->m_enqueue_count + this->m_offset) % new_capacity;
-			new_data[en_pos] = extra_copy[i];
-			this->m_enqueue_count++;
-		}
+        while (start_it != end_it)
+        {
+            T& value = *start_it;
+            en_pos = (this->m_enqueue_count + this->m_offset) % new_capacity;
+            new_data[en_pos] = value;
+            this->m_enqueue_count++;
+
+            start_it++;
+        }
 
 		this->m_allocator.deallocate(this->m_data, this->m_capacity);
 		this->m_data = new_data;

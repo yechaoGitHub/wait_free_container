@@ -208,9 +208,10 @@ public:
 		friend class wait_free_memory_pool<T>;
 
 	public:
+
         iterator(const iterator&) = delete;
         
-        void operator= (const iterator&) = delete;
+        iterator& operator= (const iterator&) = delete;
 
         explicit iterator(iterator&& rhd) noexcept :
             iterator(rhd.m_mempry_pool, rhd.m_offset)
