@@ -150,6 +150,7 @@
     <ClInclude Include="mutex_check_template.hpp" />
     <ClInclude Include="template_util.hpp" />
     <ClInclude Include="wait_free_buffer.hpp" />
+    <ClInclude Include="wait_free_generic_queue.hpp" />
     <ClInclude Include="wait_free_memory_pool.hpp" />
     <ClInclude Include="wait_free_pointer_buffer.h" />
     <ClInclude Include="wait_free_pointer_queue.h" />

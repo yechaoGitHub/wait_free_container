@@ -20,9 +20,12 @@ class wait_free_generic_queue
     using iterator = typename wait_free_memory_pool<T, TAllocator>::iterator;
 
 public:
-    explicit wait_free_generic_queue(int64_t capacity, const TAllocator<T>& memory_pool_allocator, const TAllocator<std::atomic<iterator>>& ) :
-        m_memory_pool(capacity),
-        m_queue(iterator(), capacity)
+    explicit wait_free_generic_queue(
+        int64_t capacity = 10, 
+        const TAllocator<T>& memory_pool_allocator = TAllocator<T>(), 
+        const TAllocator<std::atomic<int64_t>>& offset_queue_allocator = TAllocator<std::atomic<int64_t>>()) :
+        m_memory_pool(capacity, memory_pool_allocator),
+        m_queue(-1, capacity, offset_queue_allocator)
     {
 
     }
@@ -40,13 +43,13 @@ public:
         *elem = value;
         it.unlock();
 
-        return m_queue.enqueue(it);
+        return m_queue.enqueue(it.offset());
     }
 
     template<typename TIterator>
     int64_t enqueue_range(TIterator it_start, const TIterator& it_end)
     {
-        std::vector<iterator> arr_it;
+        std::vector<int64_t> arr_it;
 
         while (it_start != it_end)
         {
@@ -55,7 +58,7 @@ public:
             *elem = *it_start;
             it.unlock();
 
-            arr_it.push_back(it);
+            arr_it.push_back(it.offset());
 
             it_start++;
         }
@@ -65,10 +68,12 @@ public:
 
     int64_t dequeue(T& elem) noexcept
     {
-        iterator it;
-        int64_t ret = m_queue.dequeue(it);
+        int64_t offset{};
+        int64_t ret = m_queue.dequeue(offset);
         if (ret != -1)
         {
+            iterator it = m_memory_pool.get(offset);
+
             T* elem_src = it.lock();
             elem = std::move(*elem_src);
             it.unlock();
@@ -81,10 +86,11 @@ public:
 
     int64_t dequeue() noexcept 
     {
-        iterator it;
-        int64_t ret = m_queue.dequeue(it);
+        int64_t offset{};
+        int64_t ret = m_queue.dequeue(offset);
         if (ret != -1)
         {
+            iterator it = m_memory_pool.get(offset);
             m_memory_pool.deallocate(it);
         }
 
@@ -95,19 +101,20 @@ public:
     int64_t dequeue_range(TIterator it_start, const TIterator& it_end) noexcept
     {
         auto count = it_end - it_start;
-        std::vector<iterator> arr_it(count, iterator());
+        std::vector<int64_t> arr_offset(count, -1);
         
-        int64_t ret = m_queue.enqueue_range(arr_it.begin(), arr_it.end());
+        int64_t ret = this->m_queue.enqueue_range(arr_offset.begin(), arr_offset.end());
         if (ret != -1) 
         {
             for (int64_t i = 0; i < count; i++, it_start++)
             {
-                iterator &it = arr_it[i];
+                int64_t offset = arr_offset[i];
+                iterator it = this->m_memory_pool.get(offset);
                 T* elem = it.lock();
                 *it_start = std::move(*elem);
                 it.unlock();
 
-                m_memory_pool.deallocate(it);
+                this->m_memory_pool.deallocate(it);
             }
         }
 
@@ -116,14 +123,15 @@ public:
 
     int64_t dequeue_range(int64_t& count) noexcept 
     {
-        std::vector<iterator> arr_it(count, iterator());
-        auto it_start = arr_it.begin();
-        int64_t ret = m_queue.dequeue_range(it_start, arr_it.end());
+        std::vector<int64_t> arr_offset(count, -1);
+        auto arr_start = arr_offset.begin();
+        int64_t ret = m_queue.dequeue_range(arr_start, arr_offset.end());
 
-        count = it_start - arr_it.end();
+        count =  arr_offset.end() - arr_start;
         for (int64_t i = 0; i < count; i++) 
         {
-            iterator& it = arr_it[i];
+            int64_t offset = arr_offset[i];
+            iterator it = this->m_memory_pool.get(offset);
             bool b = m_memory_pool.deallocate(it);
             assert(b);
         }
@@ -144,8 +152,7 @@ public:
 private:
 
     wait_free_memory_pool<T, TAllocator>    m_memory_pool;
-    wait_free_queue<iterator, TAllocator>   m_queue;
-
+    wait_free_queue<int64_t, TAllocator>    m_queue;
 };
 
 

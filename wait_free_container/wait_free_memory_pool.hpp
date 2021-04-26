@@ -21,7 +21,12 @@ enum class memory_pool_elem_state : int64_t
 template<typename T, template <typename U> typename TAllocator = std::allocator>
 class wait_free_memory_pool
 {
+
+public:
+
 	class iterator;
+
+private:
 
 	static const int64_t  BUFFER_FREE = -1;
 	static const int64_t  BUFFER_INSERTING = -2;
@@ -52,7 +57,7 @@ public:
 	{
 		int64_t offset(0);
 
-		if (this->m_queue.dequeue(&offset))
+		if (this->m_queue.dequeue(offset))
 		{
 			return { this, offset };
 		}
@@ -205,67 +210,85 @@ public:
 
 	class iterator
 	{
-		friend class wait_free_memory_pool<T>;
+		friend class wait_free_memory_pool;
 
 	public:
+		iterator() noexcept :
+			m_mempry_pool(nullptr),
+			m_lock_count(0),
+			m_offset(-1)
+		{
+		}
 
-        iterator(const iterator&) = delete;
-        
-        iterator& operator= (const iterator&) = delete;
+		iterator(wait_free_memory_pool* mempry_pool_, int64_t offset_) noexcept :
+			m_mempry_pool(mempry_pool_),
+			m_lock_count(0),
+			m_offset(offset_)
+		{
+		}
 
-        explicit iterator(iterator&& rhd) noexcept :
-            iterator(rhd.m_mempry_pool, rhd.m_offset)
-        {
-            this->m_lock_count = rhd.m_lock_count;
+		explicit iterator(const iterator& rhd) noexcept
+		{
+			this->~iterator();
 
-            rhd.m_lock_count = 0;
-            rhd.m_offset = -1;
-        }
+			this->m_mempry_pool = rhd.m_mempry_pool;
+			this->m_offset = rhd.m_offset;
+			this->m_lock_count = 0;
+		}
 
-        iterator& operator=(iterator&& rhd) noexcept
-        {
-            this->~iterator();
+		explicit iterator(iterator&& rhd) noexcept
+		{
+			this->~iterator();
 
-            this->m_mempry_pool = rhd.m_mempry_pool;
-            this->m_offset = rhd.m_offset;
-            this->m_lock_count.store(rhd.m_lock_count);
+			this->m_mempry_pool = rhd.m_mempry_pool;
+			this->m_lock_count = rhd.m_lock_count;
+			this->m_offset = rhd.m_offset;
 
-            rhd.m_lock_count = 0;
-            rhd.m_offset = -1;
+			rhd.clear();
+		}
 
-            return *this;
-        }
+		iterator& operator=(iterator&& rhd) noexcept
+		{
+			this->~iterator();
+
+			this->m_mempry_pool = rhd.m_mempry_pool;
+			this->m_lock_count = rhd.m_lock_count;
+			this->m_offset = rhd.m_offset;
+
+			rhd.clear();
+
+			return *this;
+		}
 
 		~iterator() noexcept
 		{
-            this->m_offset = -1;
-			this->m_mempry_pool->decrease_ref_count(m_lock_count);
-            m_mempry_pool = nullptr;
+			this->m_mempry_pool->decrease_ref_count(this->m_lock_count);
+			clear();
 		}
 
 		T* lock() noexcept
 		{
-            if (this->m_mempry_pool == nullptr || 
-                this->m_offset < 0) 
-            {
-                return nullptr;
-            }
+			if (this->m_mempry_pool == nullptr ||
+				this->m_offset < 0)
+			{
+				return nullptr;
+			}
 
-            memory_pool_elem_state state = this->m_mempry_pool->get_elem_state(this->m_offset);
-            switch (state)
-            {
-            case memory_pool_elem_state::free:
-            case memory_pool_elem_state::valided:				
-                this->m_lock_count++;
-		        this->m_mempry_pool->increase_ref_count();
+			memory_pool_elem_state state = this->m_mempry_pool->get_elem_state(this->m_offset);
+			switch (state)
+			{
+			case memory_pool_elem_state::free:
+			case memory_pool_elem_state::valided:
+				this->m_lock_count++;
+				this->m_mempry_pool->increase_ref_count();
 				return this->m_mempry_pool->get_base() + this->m_offset;
-               
-            case memory_pool_elem_state::out_of_range:
-                return nullptr;
 
-            default:
-                assert(0);
-            }
+			case memory_pool_elem_state::out_of_range:
+				return nullptr;
+
+			default:
+				assert(0);
+			}
 		}
 
 		const T* lock() const noexcept
@@ -275,19 +298,18 @@ public:
 
 		void unlock() const noexcept
 		{
-            assert(m_mempry_pool != nullptr);
+			assert(m_mempry_pool != nullptr);
 
 			int64_t old_count{};
 			int64_t new_count{};
-			
-			do 
+
+			do
 			{
 				old_count = this->m_lock_count;
-				new_count = std::max(old_count - 1, 0);
-			}
-			while (!this->m_lock_count->compare_exchange_strong(old_count, new_count));
+				new_count = std::max(old_count - 1, 0ll);
+			} while (!this->m_lock_count.compare_exchange_strong(old_count, new_count));
 
-			if (old_count < new_count) 
+			if (old_count < new_count)
 			{
 				this->m_mempry_pool->decrease_ref_count();
 			}
@@ -298,41 +320,41 @@ public:
 			return this->m_offset;
 		}
 
-        memory_pool_elem_state state() const noexcept
-        {           
-            assert(this->m_mempry_pool != nullptr);
-            return this->m_mempry_pool->get_elem_state(this->m_offset);
-        }
+		memory_pool_elem_state state() const noexcept
+		{
+			assert(this->m_mempry_pool != nullptr);
+			return this->m_mempry_pool->get_elem_state(this->m_offset);
+		}
 
-        bool valid() const noexcept
-        {
-            return this->m_mempry_pool && this->m_offset > 0;
-        }
+		bool valid() const noexcept
+		{
+			return this->m_mempry_pool && this->m_offset > 0;
+		}
 
-        operator bool() const noexcept
-        {
-            return valid();
-        }
+		operator bool() const noexcept
+		{
+			return valid();
+		}
 
-        bool operator == (const iterator &rhd) const noexcept
-        {
-            return (this->m_mempry_pool == rhd.m_mempry_pool) && (this->m_offset == rhd.m_offset);
-        }
+		bool operator == (const iterator& rhd) const noexcept
+		{
+			return (this->m_mempry_pool == rhd.m_mempry_pool) && (this->m_offset == rhd.m_offset);
+		}
 
-        bool operator != (const iterator &rhd) const noexcept
-        {
-            return !(*this == rhd);
-        }
+		bool operator != (const iterator& rhd) const noexcept
+		{
+			return !(*this == rhd);
+		}
 
 	private:
 
-		iterator(wait_free_memory_pool<T> *mempry_pool, int64_t offset) noexcept :
-			m_mempry_pool(mempry_pool),
-			m_lock_count(0),
-			m_offset(offset)
+		void clear()
 		{
+			this->m_mempry_pool = nullptr;
+			this->m_lock_count = 0;
+			this->m_offset = -1;
 		}
-
+	
 		wait_free_memory_pool*			m_mempry_pool;
 		mutable std::atomic<int64_t>	m_lock_count;
 		int64_t					        m_offset;

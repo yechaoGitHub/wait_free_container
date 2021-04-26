@@ -405,7 +405,7 @@ public:
             de_pos = (old_count + this->m_offset) % this->m_capacity;
         } while (!this->m_dequeue_count.compare_exchange_strong(old_count, old_count + count));
 
-        for (int64_t i = 0; i < count; i++, start_it++)
+        for (int64_t i = 0; i < count; i++)
         {
             while (true)
             {
