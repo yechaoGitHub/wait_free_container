@@ -28,9 +28,10 @@ public:
 
 private:
 
-	static const int64_t  BUFFER_FREE = -1;
-	static const int64_t  BUFFER_INSERTING = -2;
-	static const int64_t  QUEUE_FREE = -1;
+	static const int64_t BUFFER_VALID = 0;
+	static const int64_t BUFFER_FREE = -1;
+	static const int64_t BUFFER_INSERTING = -2;
+	static const int64_t QUEUE_FREE = -1;
 
 public:
 
@@ -57,13 +58,13 @@ public:
 	{
 		int64_t offset(0);
 
-		if (this->m_queue.dequeue(offset))
+		if (this->m_queue.dequeue(offset) != -1)
 		{
 			return { this, offset };
 		}
 		else
 		{
-			int64_t cur_pos = this->m_buffer.push_back(0);
+			int64_t cur_pos = this->m_buffer.push_back(BUFFER_VALID);
 			if (cur_pos >= this->m_capacity)
 			{
 				increase_capacity(this->m_buffer.capacity());
@@ -79,7 +80,8 @@ public:
 
 		if (this->m_buffer.remove(offset))
 		{
-			this->m_queue.enqueue(offset);
+			int64_t count = this->m_queue.enqueue(offset);
+			assert(count != -1);
 
 			return true;
 		}
@@ -309,7 +311,7 @@ public:
 				new_count = std::max(old_count - 1, 0ll);
 			} while (!this->m_lock_count.compare_exchange_strong(old_count, new_count));
 
-			if (old_count < new_count)
+			if (old_count > new_count)
 			{
 				this->m_mempry_pool->decrease_ref_count();
 			}
