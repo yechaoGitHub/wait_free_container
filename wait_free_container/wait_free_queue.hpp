@@ -313,7 +313,7 @@ public:
 		int64_t new_size(0);
 		int64_t old_count(0);
 		int64_t de_pos(0);
-		T old_value(nullptr);
+		T old_value{};
 
 		if (this->m_size <= 0 || count <= 0)
 		{
@@ -510,7 +510,7 @@ private:
 		std::atomic<T>* new_data = this->m_allocator.allocate(new_capacity);
 		assert(new_data);
 		std::for_each(new_data, new_data + new_capacity,
-		[=](std::atomic<T> &elem)
+		[=](std::atomic<T>& elem)
 		{
 			elem.store(this->m_free_value);
 		});
@@ -527,15 +527,15 @@ private:
 		this->m_offset = new_capacity - (this->m_dequeue_count % new_capacity);
 
 		int64_t en_pos(0);
-        while (start_it != end_it)
-        {
-            T& value = *start_it;
-            en_pos = (this->m_enqueue_count + this->m_offset) % new_capacity;
-            new_data[en_pos] = value;
-            this->m_enqueue_count++;
+		auto size = end_it - start_it;
+		for (int32_t i = 0; i < size; i++)
+		{
+			T& value = *(start_it + i);
+			en_pos = (this->m_enqueue_count + this->m_offset) % new_capacity;
+			new_data[en_pos] = value;
+			this->m_enqueue_count++;
 
-            start_it++;
-        }
+		}
 
 		this->m_allocator.deallocate(this->m_data, this->m_capacity);
 		this->m_data = new_data;

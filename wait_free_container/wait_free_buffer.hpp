@@ -117,7 +117,9 @@ public:
 	//添加元素,元素必须为free,增加size
 	bool insert(int64_t index, const T& value) noexcept
 	{
-		T old_elem();
+		assert(index >= 0);
+
+		T old_elem{};
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
 		if (index >= this->m_cur_pos)
@@ -149,6 +151,8 @@ public:
 		bool wait_for_inserting(false);
 
 		mutex_check_weak(this->m_elem_operating, this->m_buffer_operating);
+		
+		assert(index >= 0);
 
 		if (index >= this->m_cur_pos)
 		{

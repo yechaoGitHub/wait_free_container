@@ -102,10 +102,14 @@ public:
     {
         auto count = it_end - it_start;
         std::vector<int64_t> arr_offset(count, -1);
-        
-        int64_t ret = this->m_queue.enqueue_range(arr_offset.begin(), arr_offset.end());
+        auto arr_it_start = arr_offset.begin();
+        auto arr_it_end = arr_offset.end();
+
+        int64_t ret = this->m_queue.dequeue_range(arr_it_start, arr_it_end);
         if (ret != -1) 
         {
+            count = arr_it_start - arr_offset.begin();
+
             for (int64_t i = 0; i < count; i++, it_start++)
             {
                 int64_t offset = arr_offset[i];
