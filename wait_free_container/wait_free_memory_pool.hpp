@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <memory>
 
-#include "mutex_check_template.hpp"
+#include "template_util.hpp"
 #include "wait_free_buffer.hpp"
 #include "wait_free_queue.hpp"
 

@@ -18,23 +18,8 @@
     <ClCompile Include="ConsoleApplication1.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="wait_free_pointer_buffer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="wait_free_pointer_queue.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mutex_check_template.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="wait_free_pointer_buffer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="wait_free_pointer_queue.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="wait_free_memory_pool.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

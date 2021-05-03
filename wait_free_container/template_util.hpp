@@ -56,7 +56,27 @@ TCount mutex_check_weak(std::atomic<TCount>& count, std::atomic<TMutex>&... mute
 }
 
 template<typename TCount, typename ...TMutex>
-TCount mutex_check_case_weak(std::atomic<TCount>& count, std::atomic<TMutex>&... mutex)
+TCount mutex_check_strong(std::atomic<TCount>& count, std::atomic<TMutex>&...mutex)
+{
+	TCount ret = count++;
+	while (true)
+	{
+		TCount old_mutex_count = (0 + ... + mutex);
+		if (old_mutex_count)
+		{
+			std::this_thread::yield();
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	return ret;
+}
+
+template<typename TCount, typename ...TMutex>
+TCount mutex_check_cas_weak(std::atomic<TCount>& count, std::atomic<TMutex>&... mutex)
 {
 	TCount ret = count;
 	while (true)
