@@ -49,6 +49,7 @@ public:
 		this->m_capacity = capacity;
 	}
 
+	// to fix...
 	~wait_free_memory_pool()
 	{
 		this->m_allocator.deallocate(this->m_data, this->m_capacity);

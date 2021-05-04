@@ -35,5 +35,11 @@
     <ClInclude Include="wait_free_generic_queue.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="wait_free_vector.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wait_free_generic_vector.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

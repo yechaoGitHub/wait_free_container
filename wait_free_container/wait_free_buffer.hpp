@@ -53,13 +53,15 @@ public:
 
 	~wait_free_buffer_base()
 	{
-		std::for_each(this->m_data, this->m_data + this->m_capacity,
-		[=](std::atomic<T>& elem)
-		{
-			elem.~atomic<T>();
-		});
+		mutex_check_cas_lock_strong(this->m_buffer_operating, this->m_elem_operating);
 
 		this->m_allocator.deallocate(this->m_data, this->m_capacity);
+		this->m_data = nullptr;
+		this->m_size = 0;
+		this->m_cur_pos = 0;
+		this->m_capacity = 0;
+
+		this->m_buffer_operating = false;
 	}
 	
 	//在尾部添加元素,元素必须为inserting,增加size

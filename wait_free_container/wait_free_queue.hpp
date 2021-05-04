@@ -40,6 +40,7 @@ public:
 		m_capacity = capacity;
 	}
 
+	// to fix... add lock unlock function
 	~wait_free_queue() 
 	{
 		std::for_each(this->m_data, this->m_data + this->m_capacity,
